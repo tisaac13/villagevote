@@ -885,11 +885,19 @@ function HistoryScreen({ user, onNavigate }: { user: User; onNavigate: (screen: 
 
 // Swipe Card Component - Pokemon Battle Card Style
 function SwipeCard({ measure, onVote }: { measure: Measure; onVote: (vote: 'yea' | 'nay' | 'skip') => void }) {
+  const scrollViewRef = useRef<ScrollView>(null);
   const level = measure.level || 'unknown';
   const rawSummary = measure.summary || measure.summary_short || 'No summary available.';
   const summary = cleanSummary(rawSummary);
   const displayTitle = simplifyTitle(measure.title);
   const wasSkipped = measure.user_vote === 'skip';
+
+  // Scroll to top when measure changes
+  useEffect(() => {
+    if (scrollViewRef.current) {
+      scrollViewRef.current.scrollTo({ y: 0, animated: false });
+    }
+  }, [measure.id]);
 
   const getLevelInfo = (level: string, externalId?: string) => {
     // For federal bills, show HOUSE or SENATE based on external_id
@@ -939,7 +947,7 @@ function SwipeCard({ measure, onVote }: { measure: Measure; onVote: (vote: 'yea'
 
         {/* Summary - like Pokemon description */}
         <View style={styles.descriptionBox}>
-          <ScrollView style={styles.descriptionScroll}>
+          <ScrollView ref={scrollViewRef} style={styles.descriptionScroll}>
             <Text style={styles.descriptionText}>{summary}</Text>
           </ScrollView>
         </View>
