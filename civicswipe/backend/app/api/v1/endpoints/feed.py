@@ -3,8 +3,8 @@ Feed endpoints - personalized swipe feed
 """
 from fastapi import APIRouter, Depends, Query, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, or_, and_
-from typing import Optional
+from sqlalchemy import select, or_, and_, func
+from typing import Optional, List
 from uuid import UUID
 
 from app.core.database import get_db
@@ -13,6 +13,76 @@ from app.models import Measure, UserDivision, UserVote, MeasureSource, MeasureSt
 from app.api.v1.endpoints.profile import get_current_user
 
 router = APIRouter()
+
+
+# Main categories for voting - mapped from detailed topic tags
+CATEGORY_MAPPING = {
+    "Budget & Economy": ["Budget", "Economy", "Taxes", "Banking", "Government Spending", "Economic Development"],
+    "Immigration": ["Immigration", "Asylum"],
+    "Healthcare": ["Healthcare", "Medicaid", "Mental Health", "Public Health"],
+    "Education": ["Education", "School Choice"],
+    "Environment": ["Environment", "Energy", "Agriculture"],
+    "Public Safety": ["Public Safety", "Crime", "Law Enforcement", "Drug Policy"],
+    "Civil Rights": ["Civil Rights", "Women's Issues", "Fair Housing"],
+    "Foreign Policy": ["International Affairs"],
+    "Infrastructure": ["Infrastructure", "Transportation", "Public Utilities", "Utilities"],
+    "Veterans & Military": ["Veterans", "World War II"],
+    "Government": ["Congress", "Government", "Government Operations", "Government Oversight", "Government Transparency"],
+    "Housing": ["Housing", "Land Use", "Zoning", "Property Rights"],
+    "Labor & Business": ["Labor", "Business", "Government Contracting"],
+    "Elections": ["Elections", "Civic Engagement"],
+}
+
+
+@router.get("/categories", response_model=List[dict])
+async def get_categories(
+    current_user = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """Get available voting categories with bill counts"""
+    categories = []
+
+    for category_name, topics in CATEGORY_MAPPING.items():
+        # Count bills in this category
+        count_stmt = select(func.count(Measure.id)).where(
+            Measure.level == "federal",
+            Measure.topic_tags.overlap(topics)
+        )
+        result = await db.execute(count_stmt)
+        count = result.scalar() or 0
+
+        if count > 0:
+            categories.append({
+                "name": category_name,
+                "topics": topics,
+                "count": count,
+                "icon": get_category_icon(category_name)
+            })
+
+    # Sort by count descending
+    categories.sort(key=lambda x: x["count"], reverse=True)
+    return categories
+
+
+def get_category_icon(category: str) -> str:
+    """Get emoji icon for category"""
+    icons = {
+        "Budget & Economy": "💰",
+        "Immigration": "🌎",
+        "Healthcare": "🏥",
+        "Education": "📚",
+        "Environment": "🌿",
+        "Public Safety": "🛡️",
+        "Civil Rights": "⚖️",
+        "Foreign Policy": "🌐",
+        "Infrastructure": "🏗️",
+        "Veterans & Military": "🎖️",
+        "Government": "🏛️",
+        "Housing": "🏠",
+        "Labor & Business": "💼",
+        "Elections": "🗳️",
+    }
+    return icons.get(category, "📋")
 
 
 @router.get("/feed", response_model=FeedResponse)

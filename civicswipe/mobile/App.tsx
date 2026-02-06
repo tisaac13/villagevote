@@ -87,6 +87,13 @@ interface VoteHistoryItem {
   outcome_matches_user: boolean | null;
 }
 
+interface Category {
+  name: string;
+  topics: string[];
+  count: number;
+  icon: string;
+}
+
 // Pixel Art Box Component
 function PixelBox({ children, style, variant = 'default' }: { children: React.ReactNode; style?: any; variant?: 'default' | 'menu' | 'dialog' | 'battle' }) {
   const getBoxStyle = () => {
@@ -667,12 +674,14 @@ function StatDisplay({ label, value, color, icon }: { label: string; value: numb
 }
 
 // Home Dashboard Screen - Pokemon Menu Style
-function HomeScreen({ user, onNavigate }: { user: User; onNavigate: (screen: string) => void }) {
+function HomeScreen({ user, onNavigate, onSelectCategory }: { user: User; onNavigate: (screen: string) => void; onSelectCategory: (category: Category | null) => void }) {
   const [stats, setStats] = useState<DashboardStats | null>(null);
+  const [categories, setCategories] = useState<Category[]>([]);
   const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
     loadDashboard();
+    loadCategories();
   }, []);
 
   const loadDashboard = async () => {
@@ -689,6 +698,25 @@ function HomeScreen({ user, onNavigate }: { user: User; onNavigate: (screen: str
     } finally {
       setIsLoading(false);
     }
+  };
+
+  const loadCategories = async () => {
+    try {
+      const response = await fetch(`${API_BASE_URL}/categories`, {
+        headers: { 'Authorization': `Bearer ${user.access_token}` },
+      });
+      if (response.ok) {
+        const data = await response.json();
+        setCategories(data);
+      }
+    } catch (err) {
+      console.error('Failed to load categories:', err);
+    }
+  };
+
+  const handleCategorySelect = (category: Category) => {
+    onSelectCategory(category);
+    onNavigate('feed');
   };
 
   if (isLoading) {
@@ -741,6 +769,34 @@ function HomeScreen({ user, onNavigate }: { user: User; onNavigate: (screen: str
           </View>
         </PixelBox>
       )}
+
+      {/* Vote by Category */}
+      <PixelBox variant="menu" style={styles.categoryBox}>
+        <Text style={styles.boxTitle}>═══ VOTE BY CATEGORY ═══</Text>
+
+        <TouchableOpacity
+          style={styles.allBillsButton}
+          onPress={() => { onSelectCategory(null); onNavigate('feed'); }}
+        >
+          <Text style={styles.allBillsIcon}>🗳️</Text>
+          <Text style={styles.allBillsText}>ALL BILLS</Text>
+          <Text style={styles.allBillsArrow}>►</Text>
+        </TouchableOpacity>
+
+        <View style={styles.categoryGrid}>
+          {categories.map((category) => (
+            <TouchableOpacity
+              key={category.name}
+              style={styles.categoryButton}
+              onPress={() => handleCategorySelect(category)}
+            >
+              <Text style={styles.categoryIcon}>{category.icon}</Text>
+              <Text style={styles.categoryName}>{category.name.toUpperCase()}</Text>
+              <Text style={styles.categoryCount}>{category.count}</Text>
+            </TouchableOpacity>
+          ))}
+        </View>
+      </PixelBox>
 
     </ScrollView>
   );
@@ -989,7 +1045,7 @@ function SwipeCard({ measure, onVote }: { measure: Measure; onVote: (vote: 'yea'
 }
 
 // Feed Screen - Pokemon Battle Style
-function FeedScreen({ user, onNavigate }: { user: User; onNavigate: (screen: string) => void }) {
+function FeedScreen({ user, onNavigate, selectedCategory }: { user: User; onNavigate: (screen: string) => void; selectedCategory: Category | null }) {
   const [measures, setMeasures] = useState<Measure[]>([]);
   const [currentIndex, setCurrentIndex] = useState(0);
   const [isLoading, setIsLoading] = useState(true);
@@ -997,11 +1053,21 @@ function FeedScreen({ user, onNavigate }: { user: User; onNavigate: (screen: str
 
   useEffect(() => {
     loadMeasures();
-  }, []);
+  }, [selectedCategory]);
 
   const loadMeasures = async () => {
+    setIsLoading(true);
+    setCurrentIndex(0);
     try {
-      const response = await fetch(`${API_BASE_URL}/feed?limit=30&include_skipped=true`, {
+      let url = `${API_BASE_URL}/feed?limit=30&include_skipped=true`;
+
+      // If category is selected, add topic filter for each topic in the category
+      if (selectedCategory && selectedCategory.topics.length > 0) {
+        // Use the first topic as the filter (backend will match any bill with that topic)
+        url += `&topic=${encodeURIComponent(selectedCategory.topics[0])}`;
+      }
+
+      const response = await fetch(url, {
         headers: { 'Authorization': `Bearer ${user.access_token}` },
       });
       const data = await response.json();
@@ -1063,6 +1129,14 @@ function FeedScreen({ user, onNavigate }: { user: User; onNavigate: (screen: str
 
   return (
     <View style={styles.feedGbcContainer}>
+      {/* Category Header */}
+      {selectedCategory && (
+        <View style={styles.categoryHeader}>
+          <Text style={styles.categoryHeaderIcon}>{selectedCategory.icon}</Text>
+          <Text style={styles.categoryHeaderText}>{selectedCategory.name.toUpperCase()}</Text>
+        </View>
+      )}
+
       {/* Progress Bar - like Pokemon XP bar */}
       <View style={styles.progressBarContainer}>
         <Text style={styles.progressLabel}>PROGRESS</Text>
@@ -1101,6 +1175,7 @@ function FeedScreen({ user, onNavigate }: { user: User; onNavigate: (screen: str
 function MainApp({ user, onLogout }: { user: User; onLogout: () => void }) {
   const [currentScreen, setCurrentScreen] = useState('home');
   const [menuOpen, setMenuOpen] = useState(false);
+  const [selectedCategory, setSelectedCategory] = useState<Category | null>(null);
   const slideAnim = useRef(new Animated.Value(300)).current;
 
   const openMenu = () => {
@@ -1130,16 +1205,20 @@ function MainApp({ user, onLogout }: { user: User; onLogout: () => void }) {
     setTimeout(() => onLogout(), 100);
   };
 
+  const handleSelectCategory = (category: Category | null) => {
+    setSelectedCategory(category);
+  };
+
   const renderScreen = () => {
     switch (currentScreen) {
       case 'home':
-        return <HomeScreen user={user} onNavigate={setCurrentScreen} />;
+        return <HomeScreen user={user} onNavigate={setCurrentScreen} onSelectCategory={handleSelectCategory} />;
       case 'feed':
-        return <FeedScreen user={user} onNavigate={setCurrentScreen} />;
+        return <FeedScreen user={user} onNavigate={setCurrentScreen} selectedCategory={selectedCategory} />;
       case 'history':
         return <HistoryScreen user={user} onNavigate={setCurrentScreen} />;
       default:
-        return <HomeScreen user={user} onNavigate={setCurrentScreen} />;
+        return <HomeScreen user={user} onNavigate={setCurrentScreen} onSelectCategory={handleSelectCategory} />;
     }
   };
 
@@ -1857,6 +1936,88 @@ const styles = StyleSheet.create({
     height: 2,
     backgroundColor: GBC.darkTan,
     marginVertical: 12,
+  },
+
+  // Category Selection
+  categoryBox: {
+    marginBottom: 12,
+  },
+  allBillsButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: GBC.blue,
+    padding: 12,
+    marginBottom: 12,
+    borderWidth: 3,
+    borderColor: GBC.darkBlue,
+  },
+  allBillsIcon: {
+    fontSize: 24,
+    marginRight: 12,
+  },
+  allBillsText: {
+    flex: 1,
+    fontSize: 16,
+    fontWeight: 'bold',
+    color: GBC.white,
+    fontFamily: Platform.OS === 'ios' ? 'Courier' : 'monospace',
+  },
+  allBillsArrow: {
+    fontSize: 16,
+    color: GBC.yellow,
+    fontFamily: Platform.OS === 'ios' ? 'Courier' : 'monospace',
+  },
+  categoryGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    justifyContent: 'space-between',
+  },
+  categoryButton: {
+    width: '48%',
+    backgroundColor: GBC.tan,
+    padding: 10,
+    marginBottom: 8,
+    borderWidth: 2,
+    borderColor: GBC.darkTan,
+    alignItems: 'center',
+  },
+  categoryIcon: {
+    fontSize: 24,
+    marginBottom: 4,
+  },
+  categoryName: {
+    fontSize: 10,
+    fontWeight: 'bold',
+    color: GBC.darkGreen,
+    fontFamily: Platform.OS === 'ios' ? 'Courier' : 'monospace',
+    textAlign: 'center',
+  },
+  categoryCount: {
+    fontSize: 12,
+    color: GBC.blue,
+    fontFamily: Platform.OS === 'ios' ? 'Courier' : 'monospace',
+    fontWeight: 'bold',
+    marginTop: 2,
+  },
+  categoryHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: GBC.yellow,
+    paddingVertical: 8,
+    paddingHorizontal: 16,
+    borderBottomWidth: 3,
+    borderBottomColor: GBC.darkYellow,
+  },
+  categoryHeaderIcon: {
+    fontSize: 20,
+    marginRight: 8,
+  },
+  categoryHeaderText: {
+    fontSize: 14,
+    fontWeight: 'bold',
+    color: GBC.black,
+    fontFamily: Platform.OS === 'ios' ? 'Courier' : 'monospace',
   },
 
   // Menu Box
