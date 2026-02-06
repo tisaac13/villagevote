@@ -1,0 +1,207 @@
+# CivicSwipe - Claude Code AI Assistant Rules
+# These rules help Claude Code understand the project context and coding standards
+
+## Project Context
+This is CivicSwipe - a legislative tracking app for Phoenix, Arizona.
+Users swipe on bills/ordinances (Yes/No) and later see if their vote matched their elected officials.
+
+## Tech Stack
+- Backend: Python 3.11+, FastAPI, SQLAlchemy (async), PostgreSQL
+- Background Jobs: Celery, Redis
+- Frontend: React Native (to be built)
+- Deployment: Docker, Docker Compose
+
+## Code Standards
+
+### Python Style
+- Use async/await for all database operations
+- Follow PEP 8 with Black formatter
+- Type hints required for all functions
+- Docstrings for public functions (Google style)
+- Max line length: 100 characters
+
+### Database
+- All models use UUID primary keys
+- Timestamps use timezone-aware datetime
+- Use `server_default=func.now()` for created_at
+- Always include `ondelete` in ForeignKey definitions
+
+### API Endpoints
+- Use Pydantic schemas for request/response validation
+- Return proper HTTP status codes
+- Include error handling with descriptive messages
+- Use dependency injection for database sessions
+- Implement idempotency for mutation endpoints
+
+### Security
+- Never log sensitive data (passwords, API keys, addresses)
+- Use encryption for PII (addresses)
+- Validate all user input
+- Use parameterized queries (SQLAlchemy handles this)
+- Implement rate limiting (TODO)
+
+## File Organization
+
+### When creating new endpoints:
+- Place in `backend/app/api/v1/endpoints/`
+- Import and register in `backend/app/api/v1/router.py`
+- Create Pydantic schemas in `backend/app/schemas.py`
+- Add to OpenAPI spec in `docs/api-spec.yaml`
+
+### When creating new models:
+- Place in appropriate file in `backend/app/models/`
+- Export from `backend/app/models/__init__.py`
+- Add relationships bidirectionally
+- Include `__repr__` method
+
+### When creating new services:
+- Place in `backend/app/services/`
+- Create class with methods (not just functions)
+- Include comprehensive docstrings
+- Add logging
+
+### When creating connectors:
+- Place in `backend/app/connectors/`
+- Inherit from base connector class (when created)
+- Implement error handling and retries
+- Log all external API calls
+- Store raw responses in `raw_artifacts` table
+
+## Common Patterns
+
+### Database Queries
+```python
+# Good - async with proper session management
+stmt = select(Model).where(Model.field == value)
+result = await db.execute(stmt)
+item = result.scalar_one_or_none()
+
+# Bad - synchronous query
+item = db.query(Model).filter_by(field=value).first()
+```
+
+### Error Handling
+```python
+# Good - specific exceptions with context
+if not user:
+    raise HTTPException(
+        status_code=status.HTTP_404_NOT_FOUND,
+        detail=f"User {user_id} not found"
+    )
+
+# Bad - generic exceptions
+if not user:
+    raise Exception("Not found")
+```
+
+### Logging
+```python
+# Good - structured logging with context
+logger.info(f"Processing measure {measure_id} for user {user_id}")
+logger.error(f"Failed to geocode address: {e}", exc_info=True)
+
+# Bad - print statements
+print("Processing measure")
+```
+
+## Priority Tasks (in order)
+
+1. Implement JWT authentication in `get_current_user()` dependency
+2. Build federal data connector (Congress.gov API)
+3. Build Arizona state connector (Open States API)
+4. Build Phoenix Legistar connector (web scraping)
+5. Implement Celery background jobs for scheduled ingestion
+6. Enhance geocoding service with Census API
+7. Add AI summarization service (OpenAI/Anthropic)
+8. Build React Native mobile app
+
+## External APIs
+
+### Congress.gov
+- Base URL: https://api.congress.gov/v3/
+- Requires API key (get from https://api.congress.gov/sign-up/)
+- Rate limit: Unknown, be conservative
+- Key endpoints: /bill, /votes
+
+### Open States
+- Base URL: https://v3.openstates.org/
+- Requires API key (get from https://openstates.org/accounts/profile/)
+- Rate limit: Generous for non-commercial use
+- Documentation: https://docs.openstates.org/api-v3/
+
+### Phoenix Legistar
+- Base URL: https://phoenix.legistar.com
+- No API key required (public web scraping)
+- Be respectful: cache aggressively, throttle requests
+- Calendar: /Calendar.aspx
+- Meeting details: /MeetingDetail.aspx?ID=xxx
+
+### Census Geocoder
+- Base URL: https://geocoding.geo.census.gov/geocoder
+- No API key required
+- Rate limit: Unknown, be conservative
+- Endpoint: /locations/address
+
+## Testing
+
+### Unit Tests
+```python
+# Place in tests/unit/
+# Name: test_<module_name>.py
+# Use pytest fixtures for database setup
+```
+
+### Integration Tests
+```python
+# Place in tests/integration/
+# Test full request/response cycles
+# Use TestClient from fastapi.testclient
+```
+
+## Common Issues
+
+### "No module named 'app'"
+- Ensure virtual environment is activated
+- Run from backend/ directory
+- Check PYTHONPATH if needed
+
+### Database connection errors
+- Verify PostgreSQL is running: `docker-compose ps`
+- Check DATABASE_URL in .env
+- Ensure database exists: `createdb civicswipe`
+
+### Import circular dependencies
+- Move shared types to schemas.py
+- Use TYPE_CHECKING for type hints only
+- Import modules, not individual items
+
+## Resources
+
+- FastAPI docs: https://fastapi.tiangolo.com/
+- SQLAlchemy async: https://docs.sqlalchemy.org/en/20/orm/extensions/asyncio.html
+- Pydantic: https://docs.pydantic.dev/
+- Project docs: See docs/ folder
+
+## Notes for AI Assistant
+
+When asked to implement features:
+1. Check if similar patterns exist in codebase
+2. Follow existing code structure
+3. Add comprehensive error handling
+4. Include logging
+5. Update relevant documentation
+6. Consider security implications
+7. Write tests (when test framework is set up)
+
+When debugging:
+1. Check logs first
+2. Verify environment variables
+3. Confirm database schema matches models
+4. Check for missing dependencies
+5. Review recent changes
+
+When refactoring:
+1. Maintain backward compatibility in APIs
+2. Update tests
+3. Update documentation
+4. Consider migration path for data changes

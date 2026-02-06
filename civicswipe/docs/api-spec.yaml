@@ -1,0 +1,911 @@
+openapi: 3.1.0
+info:
+  title: CivicSwipe API
+  version: 1.0.0
+  description: |
+    API for CivicSwipe - A legislation tracking and voting app.
+    Phoenix, Arizona MVP Release.
+    
+    ## Authentication
+    All endpoints except /auth/* require Bearer JWT token:
+    ```
+    Authorization: Bearer <access_token>
+    ```
+    
+    ## Pagination
+    Cursor-based pagination using `cursor` and `limit` query parameters.
+    
+    ## Idempotency
+    POST endpoints that record votes support `Idempotency-Key` header.
+
+servers:
+  - url: https://api.civicswipe.app/v1
+    description: Production
+  - url: http://localhost:8000/v1
+    description: Local development
+
+tags:
+  - name: Authentication
+    description: User authentication and registration
+  - name: Profile
+    description: User profile and location management
+  - name: Feed
+    description: Swipe feed and measure details
+  - name: Voting
+    description: Recording user votes
+  - name: My Votes
+    description: User's voting history
+  - name: Matching
+    description: Compare user votes to officials
+  - name: Admin
+    description: Administrative endpoints (restricted)
+
+paths:
+  /auth/signup:
+    post:
+      tags: [Authentication]
+      summary: Create new user account (requires address)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, password, address]
+              properties:
+                email:
+                  type: string
+                  format: email
+                  example: user@example.com
+                password:
+                  type: string
+                  format: password
+                  minLength: 8
+                  example: StrongPassword123!
+                address:
+                  $ref: '#/components/schemas/Address'
+      responses:
+        '201':
+          description: Account created successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  user:
+                    $ref: '#/components/schemas/User'
+                  tokens:
+                    $ref: '#/components/schemas/Tokens'
+                  location:
+                    $ref: '#/components/schemas/LocationResolution'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '409':
+          $ref: '#/components/responses/Conflict'
+
+  /auth/login:
+    post:
+      tags: [Authentication]
+      summary: Login with credentials
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, password]
+              properties:
+                email:
+                  type: string
+                  format: email
+                password:
+                  type: string
+                  format: password
+      responses:
+        '200':
+          description: Login successful
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  tokens:
+                    $ref: '#/components/schemas/Tokens'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /auth/refresh:
+    post:
+      tags: [Authentication]
+      summary: Refresh access token
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [refresh_token]
+              properties:
+                refresh_token:
+                  type: string
+      responses:
+        '200':
+          description: Token refreshed
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  tokens:
+                    $ref: '#/components/schemas/Tokens'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /me:
+    get:
+      tags: [Profile]
+      summary: Get current user profile
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: User profile
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  user:
+                    $ref: '#/components/schemas/User'
+                  address:
+                    $ref: '#/components/schemas/AddressPublic'
+                  location:
+                    $ref: '#/components/schemas/Location'
+                  preferences:
+                    $ref: '#/components/schemas/Preferences'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /me/address:
+    patch:
+      tags: [Profile]
+      summary: Update user address
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [address]
+              properties:
+                address:
+                  $ref: '#/components/schemas/Address'
+      responses:
+        '200':
+          description: Address updated
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  updated:
+                    type: boolean
+                  divisions_recomputed:
+                    type: boolean
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /me/preferences:
+    patch:
+      tags: [Profile]
+      summary: Update user preferences
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Preferences'
+      responses:
+        '200':
+          description: Preferences updated
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  updated:
+                    type: boolean
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /feed:
+    get:
+      tags: [Feed]
+      summary: Get personalized swipe feed
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: cursor
+          in: query
+          schema:
+            type: string
+          description: Pagination cursor
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 50
+            default: 20
+        - name: level
+          in: query
+          schema:
+            type: string
+            enum: [federal, state, city, county]
+        - name: status
+          in: query
+          schema:
+            type: string
+            enum: [introduced, scheduled, passed, failed]
+            default: scheduled
+        - name: topic
+          in: query
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Feed items
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/FeedCard'
+                  next_cursor:
+                    type: string
+                    nullable: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /measures/{measure_id}:
+    get:
+      tags: [Feed]
+      summary: Get measure details
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: measure_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Measure details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MeasureDetail'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /measures/{measure_id}/swipe:
+    post:
+      tags: [Voting]
+      summary: Record user vote (swipe)
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: measure_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: Idempotency-Key
+          in: header
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [vote]
+              properties:
+                vote:
+                  type: string
+                  enum: [yes, no]
+      responses:
+        '200':
+          description: Vote recorded
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  saved:
+                    type: boolean
+                  user_vote:
+                    $ref: '#/components/schemas/UserVote'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /my-votes:
+    get:
+      tags: [My Votes]
+      summary: Get user's voting history
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: cursor
+          in: query
+          schema:
+            type: string
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 50
+            default: 20
+        - name: level
+          in: query
+          schema:
+            type: string
+            enum: [federal, state, city, county]
+        - name: outcome
+          in: query
+          schema:
+            type: string
+            enum: [passed, failed, unknown]
+        - name: topic
+          in: query
+          schema:
+            type: string
+      responses:
+        '200':
+          description: User votes
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/MyVoteItem'
+                  next_cursor:
+                    type: string
+                    nullable: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /matches:
+    get:
+      tags: [Matching]
+      summary: Get measures with official vote matching
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: cursor
+          in: query
+          schema:
+            type: string
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 50
+            default: 20
+        - name: level
+          in: query
+          schema:
+            type: string
+            enum: [federal, state, city, county]
+      responses:
+        '200':
+          description: Match results
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/MatchSummary'
+                  next_cursor:
+                    type: string
+                    nullable: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /matches/{measure_id}:
+    get:
+      tags: [Matching]
+      summary: Get detailed match for specific measure
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: measure_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Detailed match
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MatchDetail'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /admin/connectors:
+    get:
+      tags: [Admin]
+      summary: List all connectors
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: Connectors list
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Connector'
+    post:
+      tags: [Admin]
+      summary: Create new connector
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ConnectorCreate'
+      responses:
+        '201':
+          description: Connector created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Connector'
+
+  /admin/ingest/run:
+    post:
+      tags: [Admin]
+      summary: Trigger manual ingestion run
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [connector_name]
+              properties:
+                connector_name:
+                  type: string
+                  example: phoenix_legistar
+      responses:
+        '202':
+          description: Ingestion started
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  run_id:
+                    type: string
+                    format: uuid
+                  status:
+                    type: string
+                    example: running
+
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  schemas:
+    Address:
+      type: object
+      required: [line1, city, state, postal_code, country]
+      properties:
+        line1:
+          type: string
+          example: "200 W Washington St"
+        line2:
+          type: string
+          example: ""
+        city:
+          type: string
+          example: "Phoenix"
+        state:
+          type: string
+          example: "AZ"
+        postal_code:
+          type: string
+          example: "85003"
+        country:
+          type: string
+          example: "US"
+
+    AddressPublic:
+      type: object
+      properties:
+        city:
+          type: string
+        state:
+          type: string
+        postal_code:
+          type: string
+        country:
+          type: string
+
+    User:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        email:
+          type: string
+          format: email
+
+    Tokens:
+      type: object
+      properties:
+        access_token:
+          type: string
+        refresh_token:
+          type: string
+
+    LocationResolution:
+      type: object
+      properties:
+        lat:
+          type: number
+          format: double
+        lon:
+          type: number
+          format: double
+        divisions_resolved:
+          type: boolean
+
+    Location:
+      type: object
+      properties:
+        lat:
+          type: number
+        lon:
+          type: number
+
+    Preferences:
+      type: object
+      properties:
+        topics:
+          type: array
+          items:
+            type: string
+          example: ["housing", "tax"]
+        notify_enabled:
+          type: boolean
+
+    FeedCard:
+      type: object
+      properties:
+        measure_id:
+          type: string
+          format: uuid
+        title:
+          type: string
+        level:
+          type: string
+          enum: [federal, state, county, city]
+        jurisdiction_name:
+          type: string
+        status:
+          type: string
+        scheduled_for:
+          type: string
+          format: date-time
+        topic_tags:
+          type: array
+          items:
+            type: string
+        summary_short:
+          type: string
+        sources:
+          type: array
+          items:
+            $ref: '#/components/schemas/Source'
+        user_vote:
+          type: string
+          enum: [yes, no]
+          nullable: true
+
+    Source:
+      type: object
+      properties:
+        label:
+          type: string
+        url:
+          type: string
+          format: uri
+        ctype:
+          type: string
+          enum: [html, pdf, api, text]
+
+    MeasureDetail:
+      type: object
+      properties:
+        measure:
+          type: object
+          properties:
+            id:
+              type: string
+              format: uuid
+            title:
+              type: string
+            level:
+              type: string
+            status:
+              type: string
+            introduced_at:
+              type: string
+              format: date-time
+            scheduled_for:
+              type: string
+              format: date-time
+            summary_short:
+              type: string
+            summary_long:
+              type: string
+        sources:
+          type: array
+          items:
+            $ref: '#/components/schemas/Source'
+        timeline:
+          type: array
+          items:
+            type: object
+            properties:
+              status:
+                type: string
+              effective_at:
+                type: string
+                format: date-time
+        vote_events:
+          type: array
+          items:
+            type: object
+            properties:
+              id:
+                type: string
+                format: uuid
+              body:
+                type: string
+              scheduled_for:
+                type: string
+                format: date-time
+              held_at:
+                type: string
+                format: date-time
+                nullable: true
+              result:
+                type: string
+        user_vote:
+          type: object
+          nullable: true
+          properties:
+            vote:
+              type: string
+            created_at:
+              type: string
+              format: date-time
+
+    UserVote:
+      type: object
+      properties:
+        measure_id:
+          type: string
+          format: uuid
+        vote:
+          type: string
+          enum: [yes, no]
+        created_at:
+          type: string
+          format: date-time
+
+    MyVoteItem:
+      type: object
+      properties:
+        measure_id:
+          type: string
+          format: uuid
+        title:
+          type: string
+        level:
+          type: string
+        user_vote:
+          type: string
+        status:
+          type: string
+        scheduled_for:
+          type: string
+          format: date-time
+        outcome:
+          type: string
+
+    MatchSummary:
+      type: object
+      properties:
+        measure_id:
+          type: string
+          format: uuid
+        title:
+          type: string
+        level:
+          type: string
+        user_vote:
+          type: string
+        outcome:
+          type: string
+        match_score:
+          type: number
+          format: float
+        computed_at:
+          type: string
+          format: date-time
+
+    MatchDetail:
+      type: object
+      properties:
+        measure_id:
+          type: string
+          format: uuid
+        title:
+          type: string
+        level:
+          type: string
+        user_vote:
+          type: string
+        vote_event:
+          type: object
+          properties:
+            id:
+              type: string
+              format: uuid
+            body:
+              type: string
+            held_at:
+              type: string
+              format: date-time
+            result:
+              type: string
+        match:
+          type: object
+          properties:
+            match_score:
+              type: number
+            breakdown:
+              type: object
+              properties:
+                officials:
+                  type: array
+                  items:
+                    type: object
+                    properties:
+                      official_id:
+                        type: string
+                        format: uuid
+                      name:
+                        type: string
+                      office:
+                        type: string
+                      official_vote:
+                        type: string
+                      matches_user:
+                        type: boolean
+
+    Connector:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        source:
+          type: string
+        enabled:
+          type: boolean
+        config:
+          type: object
+        updated_at:
+          type: string
+          format: date-time
+
+    ConnectorCreate:
+      type: object
+      required: [name, source, config]
+      properties:
+        name:
+          type: string
+        source:
+          type: string
+          enum: [congress, govinfo, openstates, legiscan, legistar, custom]
+        enabled:
+          type: boolean
+          default: true
+        config:
+          type: object
+
+    Error:
+      type: object
+      properties:
+        error:
+          type: object
+          properties:
+            code:
+              type: string
+            message:
+              type: string
+            details:
+              type: object
+
+  responses:
+    BadRequest:
+      description: Bad request
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    Unauthorized:
+      description: Unauthorized
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    NotFound:
+      description: Not found
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    Conflict:
+      description: Conflict
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
