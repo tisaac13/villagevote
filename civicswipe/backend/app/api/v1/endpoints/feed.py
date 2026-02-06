@@ -3,7 +3,8 @@ Feed endpoints - personalized swipe feed
 """
 from fastapi import APIRouter, Depends, Query, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, or_, and_, func
+from sqlalchemy import select, or_, and_, func, text
+from sqlalchemy.dialects.postgresql import ARRAY, array
 from typing import Optional, List
 from uuid import UUID
 
@@ -43,10 +44,12 @@ async def get_categories(
     categories = []
 
     for category_name, topics in CATEGORY_MAPPING.items():
-        # Count bills in this category
+        # Count bills in this category using PostgreSQL array overlap operator
+        # Build OR conditions for each topic
+        topic_conditions = [Measure.topic_tags.any(topic) for topic in topics]
         count_stmt = select(func.count(Measure.id)).where(
             Measure.level == "federal",
-            Measure.topic_tags.overlap(topics)
+            or_(*topic_conditions)
         )
         result = await db.execute(count_stmt)
         count = result.scalar() or 0
