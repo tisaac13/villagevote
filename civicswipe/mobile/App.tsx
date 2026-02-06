@@ -1198,16 +1198,6 @@ function MainApp({ user, onLogout }: { user: User; onLogout: () => void }) {
 
             <View style={styles.menuDivider} />
 
-            <TouchableOpacity style={styles.slideMenuItem} onPress={() => handleMenuNavigate('home')}>
-              <Text style={styles.slideMenuIcon}>🏠</Text>
-              <Text style={styles.slideMenuText}>HOME</Text>
-            </TouchableOpacity>
-
-            <TouchableOpacity style={styles.slideMenuItem} onPress={() => handleMenuNavigate('feed')}>
-              <Text style={styles.slideMenuIcon}>🗳️</Text>
-              <Text style={styles.slideMenuText}>VOTE ON BILLS</Text>
-            </TouchableOpacity>
-
             <TouchableOpacity style={styles.slideMenuItem} onPress={() => handleMenuNavigate('history')}>
               <Text style={styles.slideMenuIcon}>📜</Text>
               <Text style={styles.slideMenuText}>VOTE HISTORY</Text>
