@@ -1177,14 +1177,6 @@ function MainApp({ user, onLogout }: { user: User; onLogout: () => void }) {
           <Text style={styles.gbcTabIcon}>🗳️</Text>
           <Text style={[styles.gbcTabLabel, currentScreen === 'feed' && styles.gbcTabLabelActive]}>VOTE</Text>
         </TouchableOpacity>
-
-        <TouchableOpacity
-          style={[styles.gbcTab, currentScreen === 'history' && styles.gbcTabActive]}
-          onPress={() => setCurrentScreen('history')}
-        >
-          <Text style={styles.gbcTabIcon}>📜</Text>
-          <Text style={[styles.gbcTabLabel, currentScreen === 'history' && styles.gbcTabLabelActive]}>LOG</Text>
-        </TouchableOpacity>
       </View>
 
       {/* Slide-out Menu */}
