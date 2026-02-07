@@ -10,7 +10,7 @@ import { View, Text, ActivityIndicator, StyleSheet, TextInput, TouchableOpacity,
 // Use your Mac's IP for iOS simulator, localhost for web
 const API_BASE_URL = Platform.OS === 'web'
   ? 'http://localhost:8000/v1'
-  : 'http://192.168.1.195:8000/v1';
+  : 'http://192.168.1.56:8000/v1';
 
 // Patriotic Color Palette - Red, White, Blue & Gold
 const GBC = {
@@ -674,7 +674,7 @@ function StatDisplay({ label, value, color, icon }: { label: string; value: numb
 }
 
 // Home Dashboard Screen - Pokemon Menu Style
-function HomeScreen({ user, onNavigate, onSelectCategory }: { user: User; onNavigate: (screen: string) => void; onSelectCategory: (category: Category | null) => void }) {
+function HomeScreen({ user, onNavigate, onSelectCategory, scrollToCategories = false }: { user: User; onNavigate: (screen: string, options?: { scrollToCategories?: boolean }) => void; onSelectCategory: (category: Category | null) => void; scrollToCategories?: boolean }) {
   const [stats, setStats] = useState<DashboardStats | null>(null);
   const [categories, setCategories] = useState<Category[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -734,19 +734,21 @@ function HomeScreen({ user, onNavigate, onSelectCategory }: { user: User; onNavi
 
   return (
     <ScrollView style={styles.gbcScrollView}>
-      {/* Trainer Card */}
-      <PixelBox variant="menu" style={styles.trainerCard}>
-        <View style={styles.trainerHeader}>
-          <Text style={styles.trainerSprite}>👤</Text>
-          <View style={styles.trainerInfo}>
-            <Text style={styles.trainerName}>{user.first_name.toUpperCase()}</Text>
-            <Text style={styles.trainerTitle}>VOTER</Text>
+      {/* Trainer Card - hide when scrollToCategories */}
+      {!scrollToCategories && (
+        <PixelBox variant="menu" style={styles.trainerCard}>
+          <View style={styles.trainerHeader}>
+            <Text style={styles.trainerSprite}>👤</Text>
+            <View style={styles.trainerInfo}>
+              <Text style={styles.trainerName}>{user.first_name.toUpperCase()}</Text>
+              <Text style={styles.trainerTitle}>VOTER</Text>
+            </View>
           </View>
-        </View>
-      </PixelBox>
+        </PixelBox>
+      )}
 
-      {/* Stats Box */}
-      {stats && (
+      {/* Stats Box - hide when scrollToCategories */}
+      {!scrollToCategories && stats && (
         <PixelBox variant="dialog" style={styles.statsBox}>
           <Text style={styles.boxTitle}>═══ YOUR VOTES ═══</Text>
 
@@ -771,13 +773,14 @@ function HomeScreen({ user, onNavigate, onSelectCategory }: { user: User; onNavi
       )}
 
       {/* Vote by Category */}
-      <PixelBox variant="menu" style={styles.categoryBox}>
-        <Text style={styles.boxTitle}>═══ VOTE BY CATEGORY ═══</Text>
+      <View>
+        <PixelBox variant="menu" style={styles.categoryBox}>
+          <Text style={styles.boxTitle}>═══ VOTE BY CATEGORY ═══</Text>
 
-        <TouchableOpacity
-          style={styles.allBillsButton}
-          onPress={() => { onSelectCategory(null); onNavigate('feed'); }}
-        >
+          <TouchableOpacity
+            style={styles.allBillsButton}
+            onPress={() => { onSelectCategory(null); onNavigate('feed'); }}
+          >
           <Text style={styles.allBillsIcon}>🗳️</Text>
           <Text style={styles.allBillsText}>ALL BILLS</Text>
           <Text style={styles.allBillsArrow}>►</Text>
@@ -796,14 +799,15 @@ function HomeScreen({ user, onNavigate, onSelectCategory }: { user: User; onNavi
             </TouchableOpacity>
           ))}
         </View>
-      </PixelBox>
+        </PixelBox>
+      </View>
 
     </ScrollView>
   );
 }
 
 // Vote History Screen - Pokemon Pokedex Style
-function HistoryScreen({ user, onNavigate }: { user: User; onNavigate: (screen: string) => void }) {
+function HistoryScreen({ user, onNavigate }: { user: User; onNavigate: (screen: string, options?: { scrollToCategories?: boolean }) => void }) {
   const [votes, setVotes] = useState<VoteHistoryItem[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [filter, setFilter] = useState<string>('all');
@@ -1045,7 +1049,7 @@ function SwipeCard({ measure, onVote }: { measure: Measure; onVote: (vote: 'yea'
 }
 
 // Feed Screen - Pokemon Battle Style
-function FeedScreen({ user, onNavigate, selectedCategory }: { user: User; onNavigate: (screen: string) => void; selectedCategory: Category | null }) {
+function FeedScreen({ user, onNavigate, selectedCategory, onClearCategory }: { user: User; onNavigate: (screen: string, options?: { scrollToCategories?: boolean }) => void; selectedCategory: Category | null; onClearCategory: () => void }) {
   const [measures, setMeasures] = useState<Measure[]>([]);
   const [currentIndex, setCurrentIndex] = useState(0);
   const [isLoading, setIsLoading] = useState(true);
@@ -1158,7 +1162,30 @@ function FeedScreen({ user, onNavigate, selectedCategory }: { user: User; onNavi
 
       {currentMeasure ? (
         <SwipeCard measure={currentMeasure} onVote={handleVote} />
+      ) : selectedCategory ? (
+        /* Category Complete Screen */
+        <PixelBox variant="dialog" style={styles.victoryBox}>
+          <Text style={styles.victorySprite}>{selectedCategory.icon}</Text>
+          <Text style={styles.victoryTitle}>CATEGORY COMPLETE!</Text>
+          <Text style={styles.victoryText}>{selectedCategory.name}</Text>
+          <Text style={styles.victoryStats}>Votes cast: {votesCount}</Text>
+          <View style={styles.categoryCompleteButtons}>
+            <PixelButton
+              onPress={() => { onClearCategory(); }}
+              title="KEEP VOTING"
+              variant="primary"
+              icon="▶"
+            />
+            <PixelButton
+              onPress={() => onNavigate('home', { scrollToCategories: true })}
+              title="CHOOSE CATEGORY"
+              variant="secondary"
+              icon="◄"
+            />
+          </View>
+        </PixelBox>
       ) : (
+        /* General Complete Screen */
         <PixelBox variant="dialog" style={styles.victoryBox}>
           <Text style={styles.victorySprite}>🎉</Text>
           <Text style={styles.victoryTitle}>QUEST COMPLETE!</Text>
@@ -1176,6 +1203,7 @@ function MainApp({ user, onLogout }: { user: User; onLogout: () => void }) {
   const [currentScreen, setCurrentScreen] = useState('home');
   const [menuOpen, setMenuOpen] = useState(false);
   const [selectedCategory, setSelectedCategory] = useState<Category | null>(null);
+  const [scrollToCategories, setScrollToCategories] = useState(false);
   const slideAnim = useRef(new Animated.Value(300)).current;
 
   const openMenu = () => {
@@ -1197,6 +1225,7 @@ function MainApp({ user, onLogout }: { user: User; onLogout: () => void }) {
 
   const handleMenuNavigate = (screen: string) => {
     closeMenu();
+    setScrollToCategories(false);
     setTimeout(() => setCurrentScreen(screen), 100);
   };
 
@@ -1207,18 +1236,33 @@ function MainApp({ user, onLogout }: { user: User; onLogout: () => void }) {
 
   const handleSelectCategory = (category: Category | null) => {
     setSelectedCategory(category);
+    setScrollToCategories(false); // Reset scroll flag when selecting a category
+  };
+
+  const handleClearCategory = () => {
+    setSelectedCategory(null);
+    // Reload the feed with all bills
+  };
+
+  const handleNavigate = (screen: string, options?: { scrollToCategories?: boolean }) => {
+    if (options?.scrollToCategories) {
+      setScrollToCategories(true);
+    } else {
+      setScrollToCategories(false);
+    }
+    setCurrentScreen(screen);
   };
 
   const renderScreen = () => {
     switch (currentScreen) {
       case 'home':
-        return <HomeScreen user={user} onNavigate={setCurrentScreen} onSelectCategory={handleSelectCategory} />;
+        return <HomeScreen user={user} onNavigate={handleNavigate} onSelectCategory={handleSelectCategory} scrollToCategories={scrollToCategories} />;
       case 'feed':
-        return <FeedScreen user={user} onNavigate={setCurrentScreen} selectedCategory={selectedCategory} />;
+        return <FeedScreen user={user} onNavigate={handleNavigate} selectedCategory={selectedCategory} onClearCategory={handleClearCategory} />;
       case 'history':
-        return <HistoryScreen user={user} onNavigate={setCurrentScreen} />;
+        return <HistoryScreen user={user} onNavigate={handleNavigate} />;
       default:
-        return <HomeScreen user={user} onNavigate={setCurrentScreen} onSelectCategory={handleSelectCategory} />;
+        return <HomeScreen user={user} onNavigate={handleNavigate} onSelectCategory={handleSelectCategory} scrollToCategories={scrollToCategories} />;
     }
   };
 
@@ -1226,7 +1270,7 @@ function MainApp({ user, onLogout }: { user: User; onLogout: () => void }) {
     <View style={styles.gbcMainContainer}>
       {/* Top Bar - Pokemon style header */}
       <View style={styles.gbcHeader}>
-        <TouchableOpacity onPress={() => setCurrentScreen('home')}>
+        <TouchableOpacity onPress={() => { setScrollToCategories(false); setCurrentScreen('home'); }}>
           <Text style={styles.gbcHeaderTitle}>🏘️ VILLAGEVOTE</Text>
         </TouchableOpacity>
         <TouchableOpacity onPress={openMenu} style={styles.hamburgerButton}>
@@ -1243,7 +1287,7 @@ function MainApp({ user, onLogout }: { user: User; onLogout: () => void }) {
       <View style={styles.gbcTabBar}>
         <TouchableOpacity
           style={[styles.gbcTab, currentScreen === 'home' && styles.gbcTabActive]}
-          onPress={() => setCurrentScreen('home')}
+          onPress={() => { setScrollToCategories(false); setCurrentScreen('home'); }}
         >
           <Text style={styles.gbcTabIcon}>🏠</Text>
           <Text style={[styles.gbcTabLabel, currentScreen === 'home' && styles.gbcTabLabelActive]}>HOME</Text>
@@ -1251,7 +1295,7 @@ function MainApp({ user, onLogout }: { user: User; onLogout: () => void }) {
 
         <TouchableOpacity
           style={[styles.gbcTab, currentScreen === 'feed' && styles.gbcTabActive]}
-          onPress={() => setCurrentScreen('feed')}
+          onPress={() => { setScrollToCategories(false); setCurrentScreen('feed'); }}
         >
           <Text style={styles.gbcTabIcon}>🗳️</Text>
           <Text style={[styles.gbcTabLabel, currentScreen === 'feed' && styles.gbcTabLabelActive]}>VOTE</Text>
@@ -2276,6 +2320,10 @@ const styles = StyleSheet.create({
     color: GBC.blue,
     fontFamily: Platform.OS === 'ios' ? 'Courier' : 'monospace',
     marginBottom: 16,
+  },
+  categoryCompleteButtons: {
+    width: '100%',
+    gap: 12,
   },
 
   // History Screen
