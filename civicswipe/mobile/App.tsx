@@ -701,12 +701,16 @@ function HomeScreen({ user, onNavigate, onSelectCategory, scrollToCategories = f
   const [addrZip, setAddrZip] = useState('');
   const [addrSuggestions, setAddrSuggestions] = useState<{ matchedAddress: string; coordinates: { x: number; y: number }; addressComponents: any }[]>([]);
   const [addrSaving, setAddrSaving] = useState(false);
+  const [addrError, setAddrError] = useState('');
   const addrDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Saved address from profile (city/state/zip only - street is encrypted server-side)
+  const [savedAddr, setSavedAddr] = useState<{ city: string; state: string; zip: string } | null>(null);
 
   useEffect(() => {
     loadDashboard();
     loadCategories();
     loadRepresentatives();
+    loadSavedAddress();
   }, []);
 
   const loadDashboard = async () => {
@@ -752,6 +756,44 @@ function HomeScreen({ user, onNavigate, onSelectCategory, scrollToCategories = f
     } catch (err) {
       console.error('Failed to load representatives:', err);
     }
+  };
+
+  const loadSavedAddress = async () => {
+    try {
+      const response = await fetch(`${API_BASE_URL}/me`, {
+        headers: { 'Authorization': `Bearer ${user.access_token}` },
+      });
+      if (response.ok) {
+        const data = await response.json();
+        if (data.address && data.address.city) {
+          setSavedAddr({
+            city: data.address.city,
+            state: data.address.state || '',
+            zip: data.address.postal_code || '',
+          });
+        }
+      }
+    } catch (err) {
+      // Non-critical - just won't pre-fill
+    }
+  };
+
+  const openAddressModal = () => {
+    setAddrError('');
+    setAddrSuggestions([]);
+    // Pre-fill with saved address if editing (street is encrypted, so leave blank)
+    if (savedAddr) {
+      setAddrStreet('');
+      setAddrCity(savedAddr.city);
+      setAddrState(savedAddr.state);
+      setAddrZip(savedAddr.zip);
+    } else {
+      setAddrStreet('');
+      setAddrCity('');
+      setAddrState('');
+      setAddrZip('');
+    }
+    setShowAddressModal(true);
   };
 
   const getAlignmentColor = (pct: number | null) => {
@@ -810,6 +852,7 @@ function HomeScreen({ user, onNavigate, onSelectCategory, scrollToCategories = f
   const saveAddress = async () => {
     if (!addrStreet || !addrCity || !addrState || !addrZip) return;
     setAddrSaving(true);
+    setAddrError('');
     try {
       const response = await fetch(`${API_BASE_URL}/me/address`, {
         method: 'PATCH',
@@ -826,13 +869,18 @@ function HomeScreen({ user, onNavigate, onSelectCategory, scrollToCategories = f
         }),
       });
       if (response.ok) {
+        // Update saved address for future edits
+        setSavedAddr({ city: addrCity, state: addrState, zip: addrZip });
         setShowAddressModal(false);
         setHasAddress(true);
         // Refresh representatives after address update
         loadRepresentatives();
+      } else {
+        const data = await response.json().catch(() => null);
+        setAddrError(data?.detail || 'Failed to save address. Please try again.');
       }
     } catch (err) {
-      console.error('Failed to save address:', err);
+      setAddrError('Network error. Please check your connection.');
     } finally {
       setAddrSaving(false);
     }
@@ -907,7 +955,7 @@ function HomeScreen({ user, onNavigate, onSelectCategory, scrollToCategories = f
               </Text>
               <TouchableOpacity
                 style={styles.addAddressButton}
-                onPress={() => setShowAddressModal(true)}
+                onPress={openAddressModal}
               >
                 <Text style={styles.addAddressButtonText}>
                   {!hasAddress ? 'ADD ADDRESS' : 'UPDATE ADDRESS'}
@@ -945,7 +993,7 @@ function HomeScreen({ user, onNavigate, onSelectCategory, scrollToCategories = f
               ))}
               <TouchableOpacity
                 style={styles.updateAddressLink}
-                onPress={() => setShowAddressModal(true)}
+                onPress={openAddressModal}
               >
                 <Text style={styles.updateAddressLinkText}>UPDATE ADDRESS</Text>
               </TouchableOpacity>
@@ -959,7 +1007,7 @@ function HomeScreen({ user, onNavigate, onSelectCategory, scrollToCategories = f
         <View style={styles.addrModalOverlay}>
           <View style={styles.addrModalContainer}>
             <PixelBox variant="dialog" style={styles.addrModalBox}>
-              <Text style={styles.boxTitle}>═══ ENTER ADDRESS ═══</Text>
+              <Text style={styles.boxTitle}>{savedAddr ? '═══ UPDATE ADDRESS ═══' : '═══ ENTER ADDRESS ═══'}</Text>
 
               <View style={styles.addrField}>
                 <Text style={styles.addrFieldLabel}>STREET:</Text>
@@ -1025,10 +1073,14 @@ function HomeScreen({ user, onNavigate, onSelectCategory, scrollToCategories = f
                 />
               </View>
 
+              {addrError ? (
+                <Text style={styles.addrErrorText}>{addrError}</Text>
+              ) : null}
+
               <View style={styles.addrButtonRow}>
                 <TouchableOpacity
                   style={styles.addrCancelButton}
-                  onPress={() => { setShowAddressModal(false); setAddrSuggestions([]); }}
+                  onPress={() => { setShowAddressModal(false); setAddrSuggestions([]); setAddrError(''); }}
                 >
                   <Text style={styles.addrCancelText}>CANCEL</Text>
                 </TouchableOpacity>
@@ -2915,5 +2967,12 @@ const styles = StyleSheet.create({
     fontWeight: 'bold',
     fontFamily: Platform.OS === 'ios' ? 'Courier' : 'monospace',
     textAlign: 'center',
+  },
+  addrErrorText: {
+    color: GBC.red,
+    fontSize: 12,
+    fontFamily: Platform.OS === 'ios' ? 'Courier' : 'monospace',
+    textAlign: 'center',
+    marginBottom: 8,
   },
 });
