@@ -156,15 +156,19 @@ async def get_feed(
     # Combine: unvoted first, then skipped
     all_measures = unvoted_measures + skipped_measures
 
+    # Batch-load all sources in ONE query instead of N+1
+    measure_ids = [m.id for m in all_measures]
+    sources_by_measure = {}
+    if measure_ids:
+        sources_stmt = select(MeasureSource).where(MeasureSource.measure_id.in_(measure_ids))
+        sources_result = await db.execute(sources_stmt)
+        for s in sources_result.scalars().all():
+            sources_by_measure.setdefault(s.measure_id, []).append(s)
+
     # Build feed cards
     items = []
     for measure in all_measures:
-        # Get sources
-        sources_stmt = select(MeasureSource).where(MeasureSource.measure_id == measure.id)
-        sources_result = await db.execute(sources_stmt)
-        sources = sources_result.scalars().all()
-
-        # Check if this was previously skipped
+        sources = sources_by_measure.get(measure.id, [])
         was_skipped = measure.id in skipped_ids
 
         items.append(FeedCard(

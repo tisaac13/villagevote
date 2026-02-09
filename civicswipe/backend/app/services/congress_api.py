@@ -16,6 +16,7 @@ from sqlalchemy import select, delete
 import logging
 
 from app.core.config import settings
+from app.core.cache import cache_get, cache_set, cache_delete, congress_members_key, reps_key
 from app.models import Official, UserOfficial, OfficialDivision, Division
 
 logger = logging.getLogger(__name__)
@@ -32,7 +33,29 @@ class CongressApiService:
     Looks up a user's congressional representatives (2 Senators + 1 House Rep)
     using Congress.gov API and Census Geocoder for district resolution.
     Works for all 50 US states + DC.
+
+    Maintains a shared httpx connection pool (created at startup).
     """
+
+    def __init__(self):
+        self._client: Optional[httpx.AsyncClient] = None
+
+    async def startup(self):
+        """Create persistent httpx pool (called from lifespan)."""
+        self._client = httpx.AsyncClient(timeout=30.0)
+
+    async def shutdown(self):
+        """Close httpx pool on app shutdown."""
+        if self._client:
+            await self._client.aclose()
+            self._client = None
+
+    @property
+    def client(self) -> httpx.AsyncClient:
+        if self._client is None:
+            # Fallback for tests or if startup wasn't called
+            self._client = httpx.AsyncClient(timeout=30.0)
+        return self._client
 
     async def _congress_request(self, endpoint: str, params: Optional[Dict] = None) -> Dict:
         """Make a request to the Congress.gov API."""
@@ -41,10 +64,9 @@ class CongressApiService:
         params["api_key"] = settings.CONGRESS_API_KEY
         params["format"] = "json"
 
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            response = await client.get(url, params=params)
-            response.raise_for_status()
-            return response.json()
+        response = await self.client.get(url, params=params)
+        response.raise_for_status()
+        return response.json()
 
     async def get_congressional_district(
         self,
@@ -73,10 +95,9 @@ class CongressApiService:
                 "format": "json",
             }
 
-            async with httpx.AsyncClient(timeout=15.0) as client:
-                response = await client.get(url, params=params)
-                response.raise_for_status()
-                data = response.json()
+            response = await self.client.get(url, params=params)
+            response.raise_for_status()
+            data = response.json()
 
             matches = data.get("result", {}).get("addressMatches", [])
             if not matches:
@@ -101,32 +122,39 @@ class CongressApiService:
             logger.error(f"Census Geocoder lookup failed: {e}")
             return None
 
+    async def _get_state_members(self, state_code: str) -> List[Dict]:
+        """
+        Fetch all current Congress members for a state.
+        Cached in Redis for 1 hour to avoid hammering the Congress.gov API.
+        """
+        key = congress_members_key(state_code)
+        cached = await cache_get(key)
+        if cached is not None:
+            return cached
+
+        data = await self._congress_request(
+            f"/member/{state_code.upper()}",
+            params={"currentMember": "true", "limit": 60},
+        )
+        members = data.get("members", [])
+        await cache_set(key, members, ttl=3600)  # 1 hour
+        return members
+
     async def get_senators_by_state(self, state_code: str) -> List[Dict[str, Any]]:
         """
         Fetch current senators for a given state.
 
-        The Congress.gov API returns members with terms ordered oldest-first
-        in the list view. A senator like Schiff may have terms[0] = "House"
-        and terms[1] = "Senate". We identify senators by checking whether
-        ANY term has chamber == "Senate", or by the absence of a top-level
-        'district' field (senators don't have districts).
+        Senators are identified by the absence of a top-level 'district' field
+        and by having at least one Senate term.
         """
         try:
-            data = await self._congress_request(
-                f"/member/{state_code.upper()}",
-                params={
-                    "currentMember": "true",
-                    "limit": 20,
-                }
-            )
+            members = await self._get_state_members(state_code)
 
             senators = []
-            for member in data.get("members", []):
-                # Senators have no district field at the member level
+            for member in members:
                 if member.get("district") is not None:
                     continue
 
-                # Double-check: find the Senate term
                 terms = member.get("terms", {}).get("item", [])
                 senate_term = None
                 for t in terms:
@@ -149,25 +177,17 @@ class CongressApiService:
         """
         Fetch the House representative for a state + district.
 
-        The Congress.gov API puts 'district' at the top-level member object,
-        NOT inside the term. We match on member['district'] == district.
+        Uses the cached state member list and matches on member['district'].
         """
         try:
-            data = await self._congress_request(
-                f"/member/{state_code.upper()}",
-                params={
-                    "currentMember": "true",
-                    "limit": 60,  # Some states have 50+ districts (CA, TX)
-                }
-            )
+            members = await self._get_state_members(state_code)
 
-            for member in data.get("members", []):
+            for member in members:
                 member_district = member.get("district")
                 if member_district is None:
                     continue
 
                 if int(member_district) == district:
-                    # Find the House term
                     terms = member.get("terms", {}).get("item", [])
                     house_term = None
                     for t in terms:
@@ -256,6 +276,10 @@ class CongressApiService:
         await self._replace_user_officials(db, user_id, official_ids)
 
         await db.flush()
+
+        # Invalidate cached reps for this user so GET /representatives re-fetches
+        await cache_delete(reps_key(user_id))
+
         logger.info(f"Linked {len(official_ids)} representatives to user {user_id}")
 
         return representatives

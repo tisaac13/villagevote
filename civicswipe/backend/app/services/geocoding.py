@@ -14,7 +14,27 @@ CENSUS_GEOCODER_BASE = "https://geocoding.geo.census.gov/geocoder"
 class GeocodingService:
     """
     Service for geocoding addresses to lat/lon coordinates using the Census Geocoder.
+    Maintains a shared httpx connection pool.
     """
+
+    def __init__(self):
+        self._client: Optional[httpx.AsyncClient] = None
+
+    async def startup(self):
+        """Create persistent httpx pool (called from lifespan)."""
+        self._client = httpx.AsyncClient(timeout=15.0)
+
+    async def shutdown(self):
+        """Close httpx pool on app shutdown."""
+        if self._client:
+            await self._client.aclose()
+            self._client = None
+
+    @property
+    def client(self) -> httpx.AsyncClient:
+        if self._client is None:
+            self._client = httpx.AsyncClient(timeout=15.0)
+        return self._client
 
     async def geocode_address(
         self,
@@ -38,10 +58,9 @@ class GeocodingService:
                 "format": "json",
             }
 
-            async with httpx.AsyncClient(timeout=15.0) as client:
-                response = await client.get(url, params=params)
-                response.raise_for_status()
-                data = response.json()
+            response = await self.client.get(url, params=params)
+            response.raise_for_status()
+            data = response.json()
 
             matches = data.get("result", {}).get("addressMatches", [])
             if not matches:
@@ -79,10 +98,9 @@ class GeocodingService:
                 "format": "json",
             }
 
-            async with httpx.AsyncClient(timeout=15.0) as client:
-                response = await client.get(url, params=params)
-                response.raise_for_status()
-                data = response.json()
+            response = await self.client.get(url, params=params)
+            response.raise_for_status()
+            data = response.json()
 
             geographies = data.get("result", {}).get("geographies", {})
             return geographies if geographies else None
