@@ -103,8 +103,13 @@ class CongressApiService:
 
     async def get_senators_by_state(self, state_code: str) -> List[Dict[str, Any]]:
         """
-        Fetch current senators for a given state using the state-specific endpoint.
-        The Congress.gov API /member/{stateCode} returns all current members for that state.
+        Fetch current senators for a given state.
+
+        The Congress.gov API returns members with terms ordered oldest-first
+        in the list view. A senator like Schiff may have terms[0] = "House"
+        and terms[1] = "Senate". We identify senators by checking whether
+        ANY term has chamber == "Senate", or by the absence of a top-level
+        'district' field (senators don't have districts).
         """
         try:
             data = await self._congress_request(
@@ -117,15 +122,20 @@ class CongressApiService:
 
             senators = []
             for member in data.get("members", []):
-                terms = member.get("terms", {}).get("item", [])
-                if not terms:
+                # Senators have no district field at the member level
+                if member.get("district") is not None:
                     continue
 
-                latest_term = terms[0]
-                chamber = latest_term.get("chamber", "")
+                # Double-check: find the Senate term
+                terms = member.get("terms", {}).get("item", [])
+                senate_term = None
+                for t in terms:
+                    if t.get("chamber") == "Senate":
+                        senate_term = t
+                        break
 
-                if chamber == "Senate":
-                    senators.append(self._parse_member(member, latest_term))
+                if senate_term:
+                    senators.append(self._parse_member(member, senate_term, state_code))
 
             return senators
 
@@ -138,7 +148,9 @@ class CongressApiService:
     ) -> Optional[Dict[str, Any]]:
         """
         Fetch the House representative for a state + district.
-        Uses the state-specific endpoint and filters by district number.
+
+        The Congress.gov API puts 'district' at the top-level member object,
+        NOT inside the term. We match on member['district'] == district.
         """
         try:
             data = await self._congress_request(
@@ -150,20 +162,20 @@ class CongressApiService:
             )
 
             for member in data.get("members", []):
-                terms = member.get("terms", {}).get("item", [])
-                if not terms:
+                member_district = member.get("district")
+                if member_district is None:
                     continue
 
-                latest_term = terms[0]
-                chamber = latest_term.get("chamber", "")
-                member_district = latest_term.get("district")
-
-                if (
-                    chamber == "House of Representatives"
-                    and member_district is not None
-                    and int(member_district) == district
-                ):
-                    return self._parse_member(member, latest_term)
+                if int(member_district) == district:
+                    # Find the House term
+                    terms = member.get("terms", {}).get("item", [])
+                    house_term = None
+                    for t in terms:
+                        if t.get("chamber") == "House of Representatives":
+                            house_term = t
+                            break
+                    term = house_term or (terms[0] if terms else {})
+                    return self._parse_member(member, term, state_code)
 
             logger.warning(f"No House rep found for {state_code}-{district}")
             return None
@@ -172,16 +184,16 @@ class CongressApiService:
             logger.error(f"Failed to fetch House rep for {state_code}-{district}: {e}")
             return None
 
-    def _parse_member(self, member: Dict, term: Dict) -> Dict[str, Any]:
+    def _parse_member(self, member: Dict, term: Dict, state_code: str = "") -> Dict[str, Any]:
         """Parse a Congress.gov member response into our standard format."""
         bioguide_id = member.get("bioguideId", "")
         chamber = term.get("chamber", "")
-        district = term.get("district")
+        district = member.get("district")  # top-level, not in term
 
         if chamber == "Senate":
             office = "U.S. Senator"
             chamber_key = "us_senate"
-            district_label = term.get("stateCode", "")
+            district_label = state_code.upper()
         else:
             office = "U.S. Representative"
             chamber_key = "us_house"
@@ -194,7 +206,7 @@ class CongressApiService:
             "office": office,
             "chamber": chamber_key,
             "district_label": district_label,
-            "state": term.get("stateCode", ""),
+            "state": state_code.upper(),
             "photo_url": member.get("depiction", {}).get("imageUrl", ""),
         }
 
