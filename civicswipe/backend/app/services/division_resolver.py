@@ -1,5 +1,6 @@
 """
-Division resolution service - maps coordinates to political divisions
+Division resolution service - maps location to political divisions.
+Works for all 50 US states + DC.
 """
 from typing import List, Optional
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -10,12 +11,30 @@ from app.models import Division, UserDivision
 
 logger = logging.getLogger(__name__)
 
+# Full state name lookup from 2-letter code
+STATE_NAMES = {
+    "AL": "Alabama", "AK": "Alaska", "AZ": "Arizona", "AR": "Arkansas",
+    "CA": "California", "CO": "Colorado", "CT": "Connecticut", "DE": "Delaware",
+    "FL": "Florida", "GA": "Georgia", "HI": "Hawaii", "ID": "Idaho",
+    "IL": "Illinois", "IN": "Indiana", "IA": "Iowa", "KS": "Kansas",
+    "KY": "Kentucky", "LA": "Louisiana", "ME": "Maine", "MD": "Maryland",
+    "MA": "Massachusetts", "MI": "Michigan", "MN": "Minnesota", "MS": "Mississippi",
+    "MO": "Missouri", "MT": "Montana", "NE": "Nebraska", "NV": "Nevada",
+    "NH": "New Hampshire", "NJ": "New Jersey", "NM": "New Mexico", "NY": "New York",
+    "NC": "North Carolina", "ND": "North Dakota", "OH": "Ohio", "OK": "Oklahoma",
+    "OR": "Oregon", "PA": "Pennsylvania", "RI": "Rhode Island", "SC": "South Carolina",
+    "SD": "South Dakota", "TN": "Tennessee", "TX": "Texas", "UT": "Utah",
+    "VT": "Vermont", "VA": "Virginia", "WA": "Washington", "WV": "West Virginia",
+    "WI": "Wisconsin", "WY": "Wyoming", "DC": "District of Columbia",
+}
+
 
 class DivisionResolver:
     """
-    Resolves geographic coordinates to political divisions (jurisdictions)
+    Resolves a user's location to political divisions (federal, state, city).
+    Works for any US state.
     """
-    
+
     async def resolve_divisions(
         self,
         db: AsyncSession,
@@ -23,33 +42,34 @@ class DivisionResolver:
         lat: float,
         lon: float,
         state: str,
-        city: str
+        city: str,
     ) -> List[Division]:
         """
-        Resolve coordinates and location to all applicable divisions
-        
-        For Phoenix, AZ user, this returns:
-        - United States (country, federal level)
-        - Arizona (state)
-        - Maricopa County (county)
-        - Phoenix (city)
-        - Congressional District
-        - State Legislative Districts (upper + lower)
-        - City Council District
-        
+        Resolve location to applicable political divisions.
+
+        Creates divisions for:
+        - United States (federal)
+        - User's state
+        - User's city
+
         Args:
             db: Database session
             user_id: User UUID
             lat: Latitude
             lon: Longitude
-            state: State code (e.g., "AZ")
-            city: City name (e.g., "Phoenix")
-        
+            state: State code (e.g., "AZ", "CA", "NY")
+            city: City name
+
         Returns:
             List of Division objects
         """
         divisions = []
-        
+        state_upper = state.strip().upper()
+        state_lower = state_upper.lower()
+        city_title = city.strip().title()
+        city_slug = city.strip().lower().replace(" ", "_")
+        state_name = STATE_NAMES.get(state_upper, state_upper)
+
         try:
             # 1. Federal (always applicable for US residents)
             federal_division = await self._get_or_create_division(
@@ -57,63 +77,38 @@ class DivisionResolver:
                 division_type="country",
                 ocd_id="ocd-division/country:us",
                 name="United States",
-                level="federal"
+                level="federal",
             )
             divisions.append(federal_division)
-            
+
             # 2. State
-            if state.upper() == "AZ":
-                state_division = await self._get_or_create_division(
+            state_division = await self._get_or_create_division(
+                db,
+                division_type="state",
+                ocd_id=f"ocd-division/country:us/state:{state_lower}",
+                name=state_name,
+                level="state",
+                parent_id=federal_division.id,
+            )
+            divisions.append(state_division)
+
+            # 3. City
+            if city_title:
+                city_division = await self._get_or_create_division(
                     db,
-                    division_type="state",
-                    ocd_id="ocd-division/country:us/state:az",
-                    name="Arizona",
-                    level="state",
-                    parent_id=federal_division.id
+                    division_type="city",
+                    ocd_id=f"ocd-division/country:us/state:{state_lower}/place:{city_slug}",
+                    name=city_title,
+                    level="city",
+                    parent_id=state_division.id,
                 )
-                divisions.append(state_division)
-                
-                # 3. County (if Phoenix -> Maricopa County)
-                if city.lower() == "phoenix":
-                    county_division = await self._get_or_create_division(
-                        db,
-                        division_type="county",
-                        ocd_id="ocd-division/country:us/state:az/county:maricopa",
-                        name="Maricopa County",
-                        level="county",
-                        parent_id=state_division.id
-                    )
-                    divisions.append(county_division)
-                    
-                    # 4. City
-                    city_division = await self._get_or_create_division(
-                        db,
-                        division_type="city",
-                        ocd_id="ocd-division/country:us/state:az/place:phoenix",
-                        name="Phoenix",
-                        level="city",
-                        parent_id=county_division.id
-                    )
-                    divisions.append(city_division)
-                    
-                    # 5. Congressional District (would need API/shapefile lookup)
-                    # TODO: Implement actual district lookup based on coordinates
-                    # For now, use a placeholder
-                    logger.info(f"TODO: Lookup congressional district for {lat}, {lon}")
-                    
-                    # 6. State Legislative Districts
-                    # TODO: Implement AZ legislative district lookup
-                    logger.info(f"TODO: Lookup AZ legislative districts for {lat}, {lon}")
-                    
-                    # 7. City Council District
-                    # TODO: Implement Phoenix council district lookup
-                    logger.info(f"TODO: Lookup Phoenix council district for {lat}, {lon}")
-            
+                divisions.append(city_division)
+
             # Link divisions to user
             await self._link_user_divisions(db, user_id, [d.id for d in divisions])
-            
+
             return divisions
-            
+
         except Exception as e:
             logger.error(f"Division resolution failed: {e}")
             return divisions
