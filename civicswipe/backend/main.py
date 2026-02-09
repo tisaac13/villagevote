@@ -33,8 +33,22 @@ async def lifespan(app: FastAPI):
     await init_db()
     logger.info("Database initialized")
 
+    # Initialize Redis cache (graceful — app works without it)
+    from app.core.cache import get_redis, close_redis
+    await get_redis()
+
+    # Initialize shared httpx connection pools on service singletons
+    from app.services.congress_api import congress_api_service
+    from app.services.geocoding import geocoding_service
+    await congress_api_service.startup()
+    await geocoding_service.startup()
+
     yield
 
+    # Cleanup
+    await congress_api_service.shutdown()
+    await geocoding_service.shutdown()
+    await close_redis()
     logger.info("Shutting down CivicSwipe API...")
 
 
@@ -57,6 +71,28 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+# Rate limiting middleware (simple per-IP, 60 req/min)
+@app.middleware("http")
+async def rate_limit(request: Request, call_next):
+    """Per-IP rate limiting via Redis. Passes through if Redis is down."""
+    from app.core.cache import get_redis
+
+    client_ip = request.client.host if request.client else "unknown"
+    r = await get_redis()
+    if r is not None:
+        key = f"rl:{client_ip}"
+        try:
+            count = await r.incr(key)
+            if count == 1:
+                await r.expire(key, 60)
+            if count > 120:  # 120 requests per minute
+                return JSONResponse(status_code=429, content={"detail": "Too many requests"})
+        except Exception:
+            pass  # Fail open — don't block requests if Redis errors
+
+    return await call_next(request)
 
 
 # Request logging middleware

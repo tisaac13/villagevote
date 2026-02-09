@@ -7,14 +7,17 @@ from typing import AsyncGenerator
 
 from app.core.config import settings
 
+# Only echo SQL in development — massive I/O overhead in production
+_echo_sql = settings.ENVIRONMENT == "development"
+
 # Create async engine
 engine = create_async_engine(
     settings.DATABASE_URL,
-    echo=True,
+    echo=_echo_sql,
     future=True,
     pool_pre_ping=True,
-    pool_size=10,
-    max_overflow=20
+    pool_size=20,
+    max_overflow=40,
 )
 
 # Create async session factory
