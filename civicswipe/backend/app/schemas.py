@@ -316,6 +316,29 @@ class MatchDetail(BaseModel):
     match: Match
 
 
+# Representatives schemas
+class RepresentativeItem(BaseModel):
+    id: UUID
+    name: str
+    office: str
+    party: Optional[str] = None
+    chamber: Optional[str] = None
+    district_label: Optional[str] = None
+    photo_url: Optional[str] = None
+    alignment_percentage: Optional[float] = None
+    votes_compared: int = 0
+
+
+class RepresentativesResponse(BaseModel):
+    representatives: List[RepresentativeItem]
+    has_address: bool = True
+
+
+class RepresentativeRefreshResponse(BaseModel):
+    refreshed: bool
+    count: int
+
+
 # Admin schemas
 class ConnectorConfig(BaseModel):
     """Base connector configuration"""

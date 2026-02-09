@@ -94,6 +94,18 @@ interface Category {
   icon: string;
 }
 
+interface Representative {
+  id: string;
+  name: string;
+  office: string;
+  party: string | null;
+  chamber: string | null;
+  district_label: string | null;
+  photo_url: string | null;
+  alignment_percentage: number | null;
+  votes_compared: number;
+}
+
 // Pixel Art Box Component
 function PixelBox({ children, style, variant = 'default' }: { children: React.ReactNode; style?: any; variant?: 'default' | 'menu' | 'dialog' | 'battle' }) {
   const getBoxStyle = () => {
@@ -677,11 +689,14 @@ function StatDisplay({ label, value, color, icon }: { label: string; value: numb
 function HomeScreen({ user, onNavigate, onSelectCategory, scrollToCategories = false }: { user: User; onNavigate: (screen: string, options?: { scrollToCategories?: boolean }) => void; onSelectCategory: (category: Category | null) => void; scrollToCategories?: boolean }) {
   const [stats, setStats] = useState<DashboardStats | null>(null);
   const [categories, setCategories] = useState<Category[]>([]);
+  const [representatives, setRepresentatives] = useState<Representative[]>([]);
+  const [hasAddress, setHasAddress] = useState(true);
   const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
     loadDashboard();
     loadCategories();
+    loadRepresentatives();
   }, []);
 
   const loadDashboard = async () => {
@@ -712,6 +727,36 @@ function HomeScreen({ user, onNavigate, onSelectCategory, scrollToCategories = f
     } catch (err) {
       console.error('Failed to load categories:', err);
     }
+  };
+
+  const loadRepresentatives = async () => {
+    try {
+      const response = await fetch(`${API_BASE_URL}/representatives`, {
+        headers: { 'Authorization': `Bearer ${user.access_token}` },
+      });
+      if (response.ok) {
+        const data = await response.json();
+        setRepresentatives(data.representatives || []);
+        setHasAddress(data.has_address !== false);
+      }
+    } catch (err) {
+      console.error('Failed to load representatives:', err);
+    }
+  };
+
+  const getAlignmentColor = (pct: number | null) => {
+    if (pct === null) return GBC.gray;
+    if (pct >= 60) return '#2e8b57';
+    if (pct >= 40) return GBC.darkYellow;
+    return GBC.red;
+  };
+
+  const getPartyLabel = (party: string | null) => {
+    if (!party) return '';
+    if (party.startsWith('R')) return '(R)';
+    if (party.startsWith('D')) return '(D)';
+    if (party.startsWith('I') || party.startsWith('Ind')) return '(I)';
+    return `(${party.charAt(0)})`;
   };
 
   const handleCategorySelect = (category: Category) => {
@@ -769,6 +814,55 @@ function HomeScreen({ user, onNavigate, onSelectCategory, scrollToCategories = f
               <StatDisplay label="ALIGN" value={`${stats.alignment_score}%`} color={GBC.blue} icon="🎯" />
             )}
           </View>
+        </PixelBox>
+      )}
+
+      {/* Representatives Section - hide when scrollToCategories */}
+      {!scrollToCategories && (
+        <PixelBox variant="dialog" style={styles.repsBox}>
+          <Text style={styles.boxTitle}>═══ YOUR REPRESENTATIVES ═══</Text>
+
+          {!hasAddress ? (
+            <View style={styles.repsEmpty}>
+              <Text style={styles.repsEmptyIcon}>🏛️</Text>
+              <Text style={styles.repsEmptyText}>ENTER YOUR ADDRESS</Text>
+              <Text style={styles.repsEmptySubtext}>to see your representatives</Text>
+            </View>
+          ) : representatives.length === 0 ? (
+            <View style={styles.repsEmpty}>
+              <Text style={styles.repsEmptyIcon}>🔍</Text>
+              <Text style={styles.repsEmptyText}>NO REPS FOUND</Text>
+              <Text style={styles.repsEmptySubtext}>Update your address to find representatives</Text>
+            </View>
+          ) : (
+            representatives.map((rep) => (
+              <View key={rep.id} style={styles.repCard}>
+                <View style={styles.repHeader}>
+                  <Text style={styles.repSprite}>🏛️</Text>
+                  <View style={styles.repInfo}>
+                    <Text style={styles.repName}>
+                      {rep.name.toUpperCase()} {getPartyLabel(rep.party)}
+                    </Text>
+                    <Text style={styles.repOffice}>
+                      {rep.office}{rep.district_label ? ` - ${rep.district_label}` : ''}
+                    </Text>
+                  </View>
+                </View>
+                <View style={styles.repAlignment}>
+                  {rep.alignment_percentage !== null ? (
+                    <>
+                      <Text style={[styles.repAlignValue, { color: getAlignmentColor(rep.alignment_percentage) }]}>
+                        {rep.alignment_percentage}%
+                      </Text>
+                      <Text style={styles.repAlignLabel}>ALIGN ({rep.votes_compared})</Text>
+                    </>
+                  ) : (
+                    <Text style={styles.repAlignLabel}>NO VOTES YET</Text>
+                  )}
+                </View>
+              </View>
+            ))
+          )}
         </PixelBox>
       )}
 
@@ -2459,5 +2553,77 @@ const styles = StyleSheet.create({
     fontFamily: Platform.OS === 'ios' ? 'Courier' : 'monospace',
     textAlign: 'center',
     marginBottom: 16,
+  },
+
+  // Representatives Section
+  repsBox: {
+    marginBottom: 12,
+  },
+  repsEmpty: {
+    alignItems: 'center',
+    padding: 16,
+  },
+  repsEmptyIcon: {
+    fontSize: 32,
+    marginBottom: 8,
+  },
+  repsEmptyText: {
+    fontSize: 14,
+    fontWeight: 'bold',
+    color: GBC.darkGreen,
+    fontFamily: Platform.OS === 'ios' ? 'Courier' : 'monospace',
+    marginBottom: 4,
+  },
+  repsEmptySubtext: {
+    fontSize: 11,
+    color: GBC.gray,
+    fontFamily: Platform.OS === 'ios' ? 'Courier' : 'monospace',
+  },
+  repCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: GBC.tan,
+    padding: 10,
+    marginBottom: 6,
+    borderWidth: 2,
+    borderColor: GBC.darkTan,
+  },
+  repHeader: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  repSprite: {
+    fontSize: 24,
+    marginRight: 10,
+  },
+  repInfo: {
+    flex: 1,
+  },
+  repName: {
+    fontSize: 12,
+    fontWeight: 'bold',
+    color: GBC.darkGreen,
+    fontFamily: Platform.OS === 'ios' ? 'Courier' : 'monospace',
+  },
+  repOffice: {
+    fontSize: 10,
+    color: GBC.gray,
+    fontFamily: Platform.OS === 'ios' ? 'Courier' : 'monospace',
+    marginTop: 2,
+  },
+  repAlignment: {
+    alignItems: 'flex-end',
+    minWidth: 60,
+  },
+  repAlignValue: {
+    fontSize: 18,
+    fontWeight: 'bold',
+    fontFamily: Platform.OS === 'ios' ? 'Courier' : 'monospace',
+  },
+  repAlignLabel: {
+    fontSize: 8,
+    color: GBC.gray,
+    fontFamily: Platform.OS === 'ios' ? 'Courier' : 'monospace',
   },
 });
