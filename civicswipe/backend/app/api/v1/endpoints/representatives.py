@@ -101,7 +101,7 @@ async def refresh_representatives(
 
     reps = await congress_api_service.refresh_user_representatives(
         db=db,
-        user_id=str(current_user.id),
+        user_id=current_user.id,
         state=profile.state,
         street=street,
         city=profile.city,

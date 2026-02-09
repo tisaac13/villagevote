@@ -91,16 +91,16 @@ async def update_address(
         profile.lat = str(coords[0])
         profile.lon = str(coords[1])
         await division_resolver.resolve_divisions(
-            db=db, user_id=str(current_user.id), lat=coords[0], lon=coords[1],
+            db=db, user_id=current_user.id, lat=coords[0], lon=coords[1],
             state=address.state, city=address.city
         )
-    
+
     # Refresh congressional representatives based on new address
     reps_count = 0
     try:
         reps = await congress_api_service.refresh_user_representatives(
             db=db,
-            user_id=str(current_user.id),
+            user_id=current_user.id,
             state=address.state,
             street=address.line1,
             city=address.city,
