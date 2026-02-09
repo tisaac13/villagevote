@@ -10,7 +10,7 @@ import { View, Text, ActivityIndicator, StyleSheet, TextInput, TouchableOpacity,
 // Use your Mac's IP for iOS simulator, localhost for web
 const API_BASE_URL = Platform.OS === 'web'
   ? 'http://localhost:8000/v1'
-  : 'http://192.168.1.56:8000/v1';
+  : 'http://192.168.1.195:8000/v1';
 
 // Patriotic Color Palette - Red, White, Blue & Gold
 const GBC = {
@@ -693,10 +693,24 @@ function HomeScreen({ user, onNavigate, onSelectCategory, scrollToCategories = f
   const [hasAddress, setHasAddress] = useState(true);
   const [isLoading, setIsLoading] = useState(true);
 
+  // Address form state
+  const [showAddressModal, setShowAddressModal] = useState(false);
+  const [addrStreet, setAddrStreet] = useState('');
+  const [addrCity, setAddrCity] = useState('');
+  const [addrState, setAddrState] = useState('');
+  const [addrZip, setAddrZip] = useState('');
+  const [addrSuggestions, setAddrSuggestions] = useState<{ matchedAddress: string; coordinates: { x: number; y: number }; addressComponents: any }[]>([]);
+  const [addrSaving, setAddrSaving] = useState(false);
+  const [addrError, setAddrError] = useState('');
+  const addrDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Saved address from profile (city/state/zip only - street is encrypted server-side)
+  const [savedAddr, setSavedAddr] = useState<{ city: string; state: string; zip: string } | null>(null);
+
   useEffect(() => {
     loadDashboard();
     loadCategories();
     loadRepresentatives();
+    loadSavedAddress();
   }, []);
 
   const loadDashboard = async () => {
@@ -744,6 +758,44 @@ function HomeScreen({ user, onNavigate, onSelectCategory, scrollToCategories = f
     }
   };
 
+  const loadSavedAddress = async () => {
+    try {
+      const response = await fetch(`${API_BASE_URL}/me`, {
+        headers: { 'Authorization': `Bearer ${user.access_token}` },
+      });
+      if (response.ok) {
+        const data = await response.json();
+        if (data.address && data.address.city) {
+          setSavedAddr({
+            city: data.address.city,
+            state: data.address.state || '',
+            zip: data.address.postal_code || '',
+          });
+        }
+      }
+    } catch (err) {
+      // Non-critical - just won't pre-fill
+    }
+  };
+
+  const openAddressModal = () => {
+    setAddrError('');
+    setAddrSuggestions([]);
+    // Pre-fill with saved address if editing (street is encrypted, so leave blank)
+    if (savedAddr) {
+      setAddrStreet('');
+      setAddrCity(savedAddr.city);
+      setAddrState(savedAddr.state);
+      setAddrZip(savedAddr.zip);
+    } else {
+      setAddrStreet('');
+      setAddrCity('');
+      setAddrState('');
+      setAddrZip('');
+    }
+    setShowAddressModal(true);
+  };
+
   const getAlignmentColor = (pct: number | null) => {
     if (pct === null) return GBC.gray;
     if (pct >= 60) return '#2e8b57';
@@ -762,6 +814,76 @@ function HomeScreen({ user, onNavigate, onSelectCategory, scrollToCategories = f
   const handleCategorySelect = (category: Category) => {
     onSelectCategory(category);
     onNavigate('feed');
+  };
+
+  // Census Geocoder autocomplete - fires as user types street address
+  const searchAddress = (street: string) => {
+    setAddrStreet(street);
+    if (addrDebounceRef.current) clearTimeout(addrDebounceRef.current);
+    if (street.length < 5) {
+      setAddrSuggestions([]);
+      return;
+    }
+    addrDebounceRef.current = setTimeout(async () => {
+      try {
+        const onelineAddr = `${street}, ${addrCity || ''}, ${addrState || ''} ${addrZip || ''}`.trim();
+        const url = `https://geocoding.geo.census.gov/geocoder/locations/onelineaddress?address=${encodeURIComponent(onelineAddr)}&benchmark=Public_AR_Current&format=json`;
+        const response = await fetch(url);
+        if (response.ok) {
+          const data = await response.json();
+          const matches = data?.result?.addressMatches || [];
+          setAddrSuggestions(matches.slice(0, 5));
+        }
+      } catch (err) {
+        console.error('Address search failed:', err);
+      }
+    }, 400);
+  };
+
+  const selectSuggestion = (suggestion: any) => {
+    const components = suggestion.addressComponents || {};
+    setAddrStreet(suggestion.matchedAddress?.split(',')[0] || addrStreet);
+    setAddrCity(components.city || addrCity);
+    setAddrState(components.state || addrState);
+    setAddrZip(components.zip || addrZip);
+    setAddrSuggestions([]);
+  };
+
+  const saveAddress = async () => {
+    if (!addrStreet || !addrCity || !addrState || !addrZip) return;
+    setAddrSaving(true);
+    setAddrError('');
+    try {
+      const response = await fetch(`${API_BASE_URL}/me/address`, {
+        method: 'PATCH',
+        headers: {
+          'Authorization': `Bearer ${user.access_token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          line1: addrStreet,
+          city: addrCity,
+          state: addrState,
+          postal_code: addrZip,
+          country: 'US',
+        }),
+      });
+      if (response.ok) {
+        // Update saved address for future edits
+        setSavedAddr({ city: addrCity, state: addrState, zip: addrZip });
+        setShowAddressModal(false);
+        setHasAddress(true);
+        // Refresh representatives after address update
+        loadRepresentatives();
+      } else {
+        const data = await response.json().catch(() => null);
+        setAddrError(data?.detail || 'Failed to save address. Please try again.');
+      }
+    } catch (err) {
+      setAddrError('Network error. Please check your connection.');
+    } finally {
+      setAddrSaving(false);
+    }
   };
 
   if (isLoading) {
@@ -822,49 +944,158 @@ function HomeScreen({ user, onNavigate, onSelectCategory, scrollToCategories = f
         <PixelBox variant="dialog" style={styles.repsBox}>
           <Text style={styles.boxTitle}>═══ YOUR REPRESENTATIVES ═══</Text>
 
-          {!hasAddress ? (
+          {!hasAddress || representatives.length === 0 ? (
             <View style={styles.repsEmpty}>
               <Text style={styles.repsEmptyIcon}>🏛️</Text>
-              <Text style={styles.repsEmptyText}>ENTER YOUR ADDRESS</Text>
-              <Text style={styles.repsEmptySubtext}>to see your representatives</Text>
-            </View>
-          ) : representatives.length === 0 ? (
-            <View style={styles.repsEmpty}>
-              <Text style={styles.repsEmptyIcon}>🔍</Text>
-              <Text style={styles.repsEmptyText}>NO REPS FOUND</Text>
-              <Text style={styles.repsEmptySubtext}>Update your address to find representatives</Text>
+              <Text style={styles.repsEmptyText}>
+                {!hasAddress ? 'ENTER YOUR ADDRESS' : 'NO REPS FOUND'}
+              </Text>
+              <Text style={styles.repsEmptySubtext}>
+                {!hasAddress ? 'to see your representatives' : 'Update your address to find representatives'}
+              </Text>
+              <TouchableOpacity
+                style={styles.addAddressButton}
+                onPress={openAddressModal}
+              >
+                <Text style={styles.addAddressButtonText}>
+                  {!hasAddress ? 'ADD ADDRESS' : 'UPDATE ADDRESS'}
+                </Text>
+              </TouchableOpacity>
             </View>
           ) : (
-            representatives.map((rep) => (
-              <View key={rep.id} style={styles.repCard}>
-                <View style={styles.repHeader}>
-                  <Text style={styles.repSprite}>🏛️</Text>
-                  <View style={styles.repInfo}>
-                    <Text style={styles.repName}>
-                      {rep.name.toUpperCase()} {getPartyLabel(rep.party)}
-                    </Text>
-                    <Text style={styles.repOffice}>
-                      {rep.office}{rep.district_label ? ` - ${rep.district_label}` : ''}
-                    </Text>
+            <>
+              {representatives.map((rep) => (
+                <View key={rep.id} style={styles.repCard}>
+                  <View style={styles.repHeader}>
+                    <Text style={styles.repSprite}>🏛️</Text>
+                    <View style={styles.repInfo}>
+                      <Text style={styles.repName}>
+                        {rep.name.toUpperCase()} {getPartyLabel(rep.party)}
+                      </Text>
+                      <Text style={styles.repOffice}>
+                        {rep.office}{rep.district_label ? ` - ${rep.district_label}` : ''}
+                      </Text>
+                    </View>
+                  </View>
+                  <View style={styles.repAlignment}>
+                    {rep.alignment_percentage !== null ? (
+                      <>
+                        <Text style={[styles.repAlignValue, { color: getAlignmentColor(rep.alignment_percentage) }]}>
+                          {rep.alignment_percentage}%
+                        </Text>
+                        <Text style={styles.repAlignLabel}>ALIGN ({rep.votes_compared})</Text>
+                      </>
+                    ) : (
+                      <Text style={styles.repAlignLabel}>NO VOTES YET</Text>
+                    )}
                   </View>
                 </View>
-                <View style={styles.repAlignment}>
-                  {rep.alignment_percentage !== null ? (
-                    <>
-                      <Text style={[styles.repAlignValue, { color: getAlignmentColor(rep.alignment_percentage) }]}>
-                        {rep.alignment_percentage}%
-                      </Text>
-                      <Text style={styles.repAlignLabel}>ALIGN ({rep.votes_compared})</Text>
-                    </>
-                  ) : (
-                    <Text style={styles.repAlignLabel}>NO VOTES YET</Text>
-                  )}
-                </View>
-              </View>
-            ))
+              ))}
+              <TouchableOpacity
+                style={styles.updateAddressLink}
+                onPress={openAddressModal}
+              >
+                <Text style={styles.updateAddressLinkText}>UPDATE ADDRESS</Text>
+              </TouchableOpacity>
+            </>
           )}
         </PixelBox>
       )}
+
+      {/* Address Entry Modal */}
+      <Modal visible={showAddressModal} animationType="slide" transparent>
+        <View style={styles.addrModalOverlay}>
+          <View style={styles.addrModalContainer}>
+            <PixelBox variant="dialog" style={styles.addrModalBox}>
+              <Text style={styles.boxTitle}>{savedAddr ? '═══ UPDATE ADDRESS ═══' : '═══ ENTER ADDRESS ═══'}</Text>
+
+              <View style={styles.addrField}>
+                <Text style={styles.addrFieldLabel}>STREET:</Text>
+                <TextInput
+                  style={styles.addrInput}
+                  placeholder="123 Main St"
+                  value={addrStreet}
+                  onChangeText={searchAddress}
+                  placeholderTextColor={GBC.lightGray}
+                  autoFocus
+                />
+              </View>
+
+              {addrSuggestions.length > 0 && (
+                <View style={styles.addrSuggestions}>
+                  {addrSuggestions.map((s, i) => (
+                    <TouchableOpacity
+                      key={i}
+                      style={styles.addrSuggestionItem}
+                      onPress={() => selectSuggestion(s)}
+                    >
+                      <Text style={styles.addrSuggestionText} numberOfLines={1}>
+                        {s.matchedAddress}
+                      </Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+              )}
+
+              <View style={styles.addrField}>
+                <Text style={styles.addrFieldLabel}>CITY:</Text>
+                <TextInput
+                  style={styles.addrInput}
+                  placeholder="Phoenix"
+                  value={addrCity}
+                  onChangeText={setAddrCity}
+                  placeholderTextColor={GBC.lightGray}
+                />
+              </View>
+
+              <View style={styles.addrField}>
+                <Text style={styles.addrFieldLabel}>STATE:</Text>
+                <TextInput
+                  style={styles.addrInput}
+                  placeholder="AZ"
+                  value={addrState}
+                  onChangeText={(t) => setAddrState(t.toUpperCase().slice(0, 2))}
+                  placeholderTextColor={GBC.lightGray}
+                  autoCapitalize="characters"
+                  maxLength={2}
+                />
+              </View>
+
+              <View style={styles.addrField}>
+                <Text style={styles.addrFieldLabel}>ZIP:</Text>
+                <TextInput
+                  style={styles.addrInput}
+                  placeholder="85001"
+                  value={addrZip}
+                  onChangeText={setAddrZip}
+                  placeholderTextColor={GBC.lightGray}
+                  keyboardType="number-pad"
+                />
+              </View>
+
+              {addrError ? (
+                <Text style={styles.addrErrorText}>{addrError}</Text>
+              ) : null}
+
+              <View style={styles.addrButtonRow}>
+                <TouchableOpacity
+                  style={styles.addrCancelButton}
+                  onPress={() => { setShowAddressModal(false); setAddrSuggestions([]); setAddrError(''); }}
+                >
+                  <Text style={styles.addrCancelText}>CANCEL</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[styles.addrSaveButton, (!addrStreet || !addrCity || !addrState || !addrZip) && { opacity: 0.5 }]}
+                  onPress={saveAddress}
+                  disabled={!addrStreet || !addrCity || !addrState || !addrZip || addrSaving}
+                >
+                  <Text style={styles.addrSaveText}>{addrSaving ? 'SAVING...' : 'SAVE'}</Text>
+                </TouchableOpacity>
+              </View>
+            </PixelBox>
+          </View>
+        </View>
+      </Modal>
 
       {/* Vote by Category */}
       <View>
@@ -2625,5 +2856,123 @@ const styles = StyleSheet.create({
     fontSize: 8,
     color: GBC.gray,
     fontFamily: Platform.OS === 'ios' ? 'Courier' : 'monospace',
+  },
+
+  // Add/Update Address Button
+  addAddressButton: {
+    backgroundColor: GBC.blue,
+    paddingVertical: 10,
+    paddingHorizontal: 20,
+    marginTop: 12,
+    borderWidth: 3,
+    borderColor: GBC.darkBlue,
+  },
+  addAddressButtonText: {
+    color: GBC.white,
+    fontSize: 14,
+    fontWeight: 'bold',
+    fontFamily: Platform.OS === 'ios' ? 'Courier' : 'monospace',
+    textAlign: 'center',
+  },
+  updateAddressLink: {
+    paddingVertical: 8,
+    alignItems: 'center',
+  },
+  updateAddressLinkText: {
+    color: GBC.blue,
+    fontSize: 10,
+    fontFamily: Platform.OS === 'ios' ? 'Courier' : 'monospace',
+    fontWeight: 'bold',
+  },
+
+  // Address Modal
+  addrModalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.6)',
+    justifyContent: 'center',
+    padding: 20,
+  },
+  addrModalContainer: {
+    maxHeight: '80%',
+  },
+  addrModalBox: {
+    backgroundColor: GBC.white,
+  },
+  addrField: {
+    marginBottom: 10,
+  },
+  addrFieldLabel: {
+    fontSize: 11,
+    fontWeight: 'bold',
+    color: GBC.darkGreen,
+    fontFamily: Platform.OS === 'ios' ? 'Courier' : 'monospace',
+    marginBottom: 4,
+  },
+  addrInput: {
+    borderWidth: 2,
+    borderColor: GBC.darkTan,
+    backgroundColor: GBC.tan,
+    padding: 10,
+    fontSize: 14,
+    fontFamily: Platform.OS === 'ios' ? 'Courier' : 'monospace',
+    color: GBC.black,
+  },
+  addrSuggestions: {
+    borderWidth: 2,
+    borderColor: GBC.darkTan,
+    backgroundColor: GBC.white,
+    marginBottom: 10,
+    marginTop: -10,
+  },
+  addrSuggestionItem: {
+    padding: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: GBC.tan,
+  },
+  addrSuggestionText: {
+    fontSize: 12,
+    color: GBC.darkGreen,
+    fontFamily: Platform.OS === 'ios' ? 'Courier' : 'monospace',
+  },
+  addrButtonRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginTop: 12,
+    gap: 12,
+  },
+  addrCancelButton: {
+    flex: 1,
+    paddingVertical: 12,
+    borderWidth: 3,
+    borderColor: GBC.darkTan,
+    backgroundColor: GBC.tan,
+  },
+  addrCancelText: {
+    color: GBC.gray,
+    fontSize: 14,
+    fontWeight: 'bold',
+    fontFamily: Platform.OS === 'ios' ? 'Courier' : 'monospace',
+    textAlign: 'center',
+  },
+  addrSaveButton: {
+    flex: 1,
+    paddingVertical: 12,
+    borderWidth: 3,
+    borderColor: GBC.darkBlue,
+    backgroundColor: GBC.blue,
+  },
+  addrSaveText: {
+    color: GBC.white,
+    fontSize: 14,
+    fontWeight: 'bold',
+    fontFamily: Platform.OS === 'ios' ? 'Courier' : 'monospace',
+    textAlign: 'center',
+  },
+  addrErrorText: {
+    color: GBC.red,
+    fontSize: 12,
+    fontFamily: Platform.OS === 'ios' ? 'Courier' : 'monospace',
+    textAlign: 'center',
+    marginBottom: 8,
   },
 });

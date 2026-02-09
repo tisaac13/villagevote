@@ -1,6 +1,7 @@
 """
 Representatives endpoints - look up and display user's congressional representatives
 """
+from typing import Optional, Tuple
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func, and_
@@ -100,7 +101,7 @@ async def refresh_representatives(
 
     reps = await congress_api_service.refresh_user_representatives(
         db=db,
-        user_id=str(current_user.id),
+        user_id=current_user.id,
         state=profile.state,
         street=street,
         city=profile.city,
@@ -114,7 +115,7 @@ async def refresh_representatives(
 
 async def _compute_alignment(
     db: AsyncSession, user_id, official_id
-) -> tuple[float | None, int]:
+) -> Tuple[Optional[float], int]:
     """
     Compute alignment percentage between a user and a specific official.
 

@@ -4,6 +4,8 @@ Congress.gov API service for representative lookup.
 Uses Congress.gov API to fetch current members of Congress,
 and Census Geocoder to resolve addresses to congressional districts.
 
+Works for all 50 US states + DC.
+
 API docs: https://api.congress.gov/
 Census Geocoder: https://geocoding.geo.census.gov/geocoder/
 """
@@ -29,6 +31,7 @@ class CongressApiService:
     """
     Looks up a user's congressional representatives (2 Senators + 1 House Rep)
     using Congress.gov API and Census Geocoder for district resolution.
+    Works for all 50 US states + DC.
     """
 
     async def _congress_request(self, endpoint: str, params: Optional[Dict] = None) -> Dict:
@@ -52,6 +55,7 @@ class CongressApiService:
     ) -> Optional[int]:
         """
         Use Census Geocoder to determine congressional district from address.
+        Works for any US address.
 
         Returns:
             Congressional district number, or None if lookup fails.
@@ -65,7 +69,7 @@ class CongressApiService:
                 "zip": zip_code,
                 "benchmark": "Public_AR_Current",
                 "vintage": "Current_Current",
-                "layers": "54",  # 119th Congressional Districts
+                "layers": "54",  # Congressional Districts
                 "format": "json",
             }
 
@@ -80,18 +84,15 @@ class CongressApiService:
                 return None
 
             geographies = matches[0].get("geographies", {})
-            districts = geographies.get("119th Congressional Districts", [])
-            if not districts:
-                # Try alternate key names
-                for key in geographies:
-                    if "Congressional" in key:
-                        districts = geographies[key]
-                        break
 
-            if districts:
-                cd = districts[0].get("BASENAME", districts[0].get("CD119FP"))
-                if cd is not None:
-                    return int(cd)
+            # Look for congressional district in any matching key
+            for key in geographies:
+                if "Congressional" in key:
+                    districts = geographies[key]
+                    if districts:
+                        cd = districts[0].get("BASENAME", districts[0].get("CD119FP", districts[0].get("CD", "")))
+                        if cd is not None and str(cd).isdigit():
+                            return int(cd)
 
             logger.warning(f"No congressional district found for {city}, {state}")
             return None
@@ -104,34 +105,37 @@ class CongressApiService:
         """
         Fetch current senators for a given state.
 
-        Args:
-            state_code: Two-letter state code (e.g., "AZ")
-
-        Returns:
-            List of senator dicts with name, party, bioguide_id, etc.
+        The Congress.gov API returns members with terms ordered oldest-first
+        in the list view. A senator like Schiff may have terms[0] = "House"
+        and terms[1] = "Senate". We identify senators by checking whether
+        ANY term has chamber == "Senate", or by the absence of a top-level
+        'district' field (senators don't have districts).
         """
         try:
             data = await self._congress_request(
-                f"/member",
+                f"/member/{state_code.upper()}",
                 params={
                     "currentMember": "true",
-                    "limit": 10,
+                    "limit": 20,
                 }
             )
 
             senators = []
             for member in data.get("members", []):
-                # Filter by state and chamber
-                terms = member.get("terms", {}).get("item", [])
-                if not terms:
+                # Senators have no district field at the member level
+                if member.get("district") is not None:
                     continue
 
-                latest_term = terms[0]  # Most recent term first
-                member_state = latest_term.get("stateCode", "")
-                chamber = latest_term.get("chamber", "")
+                # Double-check: find the Senate term
+                terms = member.get("terms", {}).get("item", [])
+                senate_term = None
+                for t in terms:
+                    if t.get("chamber") == "Senate":
+                        senate_term = t
+                        break
 
-                if member_state.upper() == state_code.upper() and chamber == "Senate":
-                    senators.append(self._parse_member(member, latest_term))
+                if senate_term:
+                    senators.append(self._parse_member(member, senate_term, state_code))
 
             return senators
 
@@ -145,39 +149,33 @@ class CongressApiService:
         """
         Fetch the House representative for a state + district.
 
-        Args:
-            state_code: Two-letter state code
-            district: Congressional district number
-
-        Returns:
-            Representative dict or None
+        The Congress.gov API puts 'district' at the top-level member object,
+        NOT inside the term. We match on member['district'] == district.
         """
         try:
             data = await self._congress_request(
-                f"/member",
+                f"/member/{state_code.upper()}",
                 params={
                     "currentMember": "true",
-                    "limit": 10,
+                    "limit": 60,  # Some states have 50+ districts (CA, TX)
                 }
             )
 
             for member in data.get("members", []):
-                terms = member.get("terms", {}).get("item", [])
-                if not terms:
+                member_district = member.get("district")
+                if member_district is None:
                     continue
 
-                latest_term = terms[0]
-                member_state = latest_term.get("stateCode", "")
-                chamber = latest_term.get("chamber", "")
-                member_district = latest_term.get("district")
-
-                if (
-                    member_state.upper() == state_code.upper()
-                    and chamber == "House of Representatives"
-                    and member_district is not None
-                    and int(member_district) == district
-                ):
-                    return self._parse_member(member, latest_term)
+                if int(member_district) == district:
+                    # Find the House term
+                    terms = member.get("terms", {}).get("item", [])
+                    house_term = None
+                    for t in terms:
+                        if t.get("chamber") == "House of Representatives":
+                            house_term = t
+                            break
+                    term = house_term or (terms[0] if terms else {})
+                    return self._parse_member(member, term, state_code)
 
             logger.warning(f"No House rep found for {state_code}-{district}")
             return None
@@ -186,20 +184,20 @@ class CongressApiService:
             logger.error(f"Failed to fetch House rep for {state_code}-{district}: {e}")
             return None
 
-    def _parse_member(self, member: Dict, term: Dict) -> Dict[str, Any]:
+    def _parse_member(self, member: Dict, term: Dict, state_code: str = "") -> Dict[str, Any]:
         """Parse a Congress.gov member response into our standard format."""
         bioguide_id = member.get("bioguideId", "")
         chamber = term.get("chamber", "")
-        district = term.get("district")
+        district = member.get("district")  # top-level, not in term
 
         if chamber == "Senate":
             office = "U.S. Senator"
             chamber_key = "us_senate"
-            district_label = term.get("stateCode", "")
+            district_label = state_code.upper()
         else:
             office = "U.S. Representative"
             chamber_key = "us_house"
-            district_label = f"CD-{district:02d}" if district else ""
+            district_label = f"CD-{int(district):02d}" if district else ""
 
         return {
             "bioguide_id": bioguide_id,
@@ -208,7 +206,7 @@ class CongressApiService:
             "office": office,
             "chamber": chamber_key,
             "district_label": district_label,
-            "state": term.get("stateCode", ""),
+            "state": state_code.upper(),
             "photo_url": member.get("depiction", {}).get("imageUrl", ""),
         }
 
@@ -224,13 +222,14 @@ class CongressApiService:
         """
         Full flow: look up congressional district, fetch senators + house rep,
         upsert into officials table, and link to user via user_officials.
+        Works for any US state.
 
         Returns:
             List of representative dicts that were linked to the user.
         """
         representatives = []
 
-        # 1. Get senators by state
+        # 1. Get senators by state (works for all 50 states + DC)
         senators = await self.get_senators_by_state(state)
         representatives.extend(senators)
 
