@@ -11,6 +11,7 @@ from app.schemas import ProfileResponse, AddressPublic, Location, Preferences, A
 from app.models import User, UserProfile, UserPreferences
 from app.services.geocoding import geocoding_service
 from app.services.division_resolver import division_resolver
+from app.services.congress_api import congress_api_service
 from app.api.deps import get_current_user
 
 router = APIRouter()
@@ -94,8 +95,29 @@ async def update_address(
             state=address.state, city=address.city
         )
     
+    # Refresh congressional representatives based on new address
+    reps_count = 0
+    try:
+        reps = await congress_api_service.refresh_user_representatives(
+            db=db,
+            user_id=str(current_user.id),
+            state=address.state,
+            street=address.line1,
+            city=address.city,
+            zip_code=address.postal_code,
+        )
+        reps_count = len(reps)
+    except Exception as e:
+        # Don't fail the address update if rep lookup fails
+        import logging
+        logging.getLogger(__name__).warning(f"Representative refresh failed: {e}")
+
     await db.commit()
-    return {"updated": True, "divisions_recomputed": coords is not None}
+    return {
+        "updated": True,
+        "divisions_recomputed": coords is not None,
+        "representatives_found": reps_count,
+    }
 
 
 @router.patch("/preferences")
