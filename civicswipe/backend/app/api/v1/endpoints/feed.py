@@ -9,7 +9,7 @@ from typing import Optional, List
 from uuid import UUID
 
 from app.core.database import get_db
-from app.schemas import FeedResponse, FeedCard, MeasureDetail, JurisdictionLevel, MeasureStatus
+from app.schemas import FeedResponse, FeedCard, MeasureDetail, JurisdictionLevel, MeasureStatus, FeedMode
 from app.models import Measure, UserDivision, UserVote, MeasureSource, MeasureStatusEvent, VoteEvent
 from app.api.v1.endpoints.profile import get_current_user
 
@@ -37,11 +37,16 @@ CATEGORY_MAPPING = {
 
 @router.get("/categories", response_model=List[dict])
 async def get_categories(
+    mode: Optional[FeedMode] = Query(None, description="Filter by upcoming or historical bills"),
     current_user = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
     """Get available voting categories with bill counts"""
     categories = []
+
+    # Define status filters by mode
+    upcoming_statuses = ["introduced", "scheduled", "in_committee"]
+    historical_statuses = ["passed", "failed", "tabled", "withdrawn"]
 
     for category_name, topics in CATEGORY_MAPPING.items():
         # Count bills in this category using PostgreSQL array overlap operator
@@ -51,6 +56,13 @@ async def get_categories(
             Measure.level == "federal",
             or_(*topic_conditions)
         )
+
+        # Apply mode filter
+        if mode == FeedMode.UPCOMING:
+            count_stmt = count_stmt.where(Measure.status.in_(upcoming_statuses))
+        elif mode == FeedMode.HISTORICAL:
+            count_stmt = count_stmt.where(Measure.status.in_(historical_statuses))
+
         result = await db.execute(count_stmt)
         count = result.scalar() or 0
 
@@ -94,6 +106,7 @@ async def get_feed(
     limit: int = Query(20, ge=1, le=50),
     level: Optional[JurisdictionLevel] = Query(None),
     status: Optional[MeasureStatus] = Query(None),  # None means show all statuses
+    mode: Optional[FeedMode] = Query(None, description="Filter by upcoming or historical bills"),
     topic: Optional[str] = Query(None),
     include_skipped: bool = Query(True, description="Include previously skipped items at end"),
     current_user = Depends(get_current_user),
@@ -126,7 +139,15 @@ async def get_feed(
     # Filter out procedural items
     base_stmt = base_stmt.where(Measure.summary_short != "Procedural item - no action needed from voters.")
 
-    # Apply filters
+    # Apply mode filter (upcoming vs historical)
+    upcoming_statuses = ["introduced", "scheduled", "in_committee"]
+    historical_statuses = ["passed", "failed", "tabled", "withdrawn"]
+    if mode == FeedMode.UPCOMING:
+        base_stmt = base_stmt.where(Measure.status.in_(upcoming_statuses))
+    elif mode == FeedMode.HISTORICAL:
+        base_stmt = base_stmt.where(Measure.status.in_(historical_statuses))
+
+    # Apply other filters
     if level:
         base_stmt = base_stmt.where(Measure.level == level.value)
     if status:
@@ -136,7 +157,12 @@ async def get_feed(
 
     # First: Get unvoted measures (priority)
     unvoted_stmt = base_stmt.where(~Measure.id.in_(list(user_votes.keys()))) if user_votes else base_stmt
-    unvoted_stmt = unvoted_stmt.order_by(Measure.scheduled_for.asc().nullslast(), Measure.updated_at.desc())
+
+    # Sort: historical by updated_at DESC (most recently resolved first), upcoming by scheduled date
+    if mode == FeedMode.HISTORICAL:
+        unvoted_stmt = unvoted_stmt.order_by(Measure.updated_at.desc())
+    else:
+        unvoted_stmt = unvoted_stmt.order_by(Measure.scheduled_for.asc().nullslast(), Measure.updated_at.desc())
     unvoted_stmt = unvoted_stmt.limit(limit)
 
     result = await db.execute(unvoted_stmt)

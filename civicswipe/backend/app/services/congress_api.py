@@ -299,6 +299,7 @@ class CongressApiService:
             official.chamber = rep["chamber"]
             official.district_label = rep["district_label"]
             official.photo_url = rep.get("photo_url")
+            official.bioguide_id = rep["bioguide_id"]
         else:
             official = Official(
                 external_id=external_id,
@@ -308,6 +309,7 @@ class CongressApiService:
                 chamber=rep["chamber"],
                 district_label=rep["district_label"],
                 photo_url=rep.get("photo_url"),
+                bioguide_id=rep["bioguide_id"],
             )
             db.add(official)
             await db.flush()

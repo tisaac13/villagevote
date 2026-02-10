@@ -42,6 +42,11 @@ class OfficialVoteValue(str, Enum):
     UNKNOWN = "unknown"
 
 
+class FeedMode(str, Enum):
+    UPCOMING = "upcoming"
+    HISTORICAL = "historical"
+
+
 class ContentType(str, Enum):
     HTML = "html"
     PDF = "pdf"

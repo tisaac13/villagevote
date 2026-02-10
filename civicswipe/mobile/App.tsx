@@ -41,6 +41,7 @@ const GBC = {
 
   // Special
   pixelBorder: '#1a2b4c',    // Dark navy border
+  screenBg: '#0f1d33',       // Deep navy (screen background)
 };
 
 // Types
@@ -686,7 +687,7 @@ function StatDisplay({ label, value, color, icon }: { label: string; value: numb
 }
 
 // Home Dashboard Screen - Pokemon Menu Style
-function HomeScreen({ user, onNavigate, onSelectCategory, scrollToCategories = false }: { user: User; onNavigate: (screen: string, options?: { scrollToCategories?: boolean }) => void; onSelectCategory: (category: Category | null) => void; scrollToCategories?: boolean }) {
+function HomeScreen({ user, onNavigate, onSelectCategory, scrollToCategories = false, feedMode, onSetFeedMode }: { user: User; onNavigate: (screen: string, options?: { scrollToCategories?: boolean }) => void; onSelectCategory: (category: Category | null) => void; scrollToCategories?: boolean; feedMode: 'upcoming' | 'historical'; onSetFeedMode: (mode: 'upcoming' | 'historical') => void }) {
   const [stats, setStats] = useState<DashboardStats | null>(null);
   const [categories, setCategories] = useState<Category[]>([]);
   const [representatives, setRepresentatives] = useState<Representative[]>([]);
@@ -708,10 +709,13 @@ function HomeScreen({ user, onNavigate, onSelectCategory, scrollToCategories = f
 
   useEffect(() => {
     loadDashboard();
-    loadCategories();
     loadRepresentatives();
     loadSavedAddress();
   }, []);
+
+  useEffect(() => {
+    loadCategories();
+  }, [feedMode]);
 
   const loadDashboard = async () => {
     try {
@@ -731,7 +735,7 @@ function HomeScreen({ user, onNavigate, onSelectCategory, scrollToCategories = f
 
   const loadCategories = async () => {
     try {
-      const response = await fetch(`${API_BASE_URL}/categories`, {
+      const response = await fetch(`${API_BASE_URL}/categories?mode=${feedMode}`, {
         headers: { 'Authorization': `Bearer ${user.access_token}` },
       });
       if (response.ok) {
@@ -1102,12 +1106,28 @@ function HomeScreen({ user, onNavigate, onSelectCategory, scrollToCategories = f
         <PixelBox variant="menu" style={styles.categoryBox}>
           <Text style={styles.boxTitle}>═══ VOTE BY CATEGORY ═══</Text>
 
+          {/* Mode toggle: Upcoming vs Historical */}
+          <View style={styles.feedModeToggle}>
+            <TouchableOpacity
+              style={[styles.feedModeBtn, feedMode === 'upcoming' && styles.feedModeBtnActive]}
+              onPress={() => onSetFeedMode('upcoming')}
+            >
+              <Text style={[styles.feedModeBtnText, feedMode === 'upcoming' && styles.feedModeBtnTextActive]}>📋 UPCOMING</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.feedModeBtn, feedMode === 'historical' && styles.feedModeBtnActive]}
+              onPress={() => onSetFeedMode('historical')}
+            >
+              <Text style={[styles.feedModeBtnText, feedMode === 'historical' && styles.feedModeBtnTextActive]}>📜 HISTORICAL</Text>
+            </TouchableOpacity>
+          </View>
+
           <TouchableOpacity
             style={styles.allBillsButton}
             onPress={() => { onSelectCategory(null); onNavigate('feed'); }}
           >
           <Text style={styles.allBillsIcon}>🗳️</Text>
-          <Text style={styles.allBillsText}>ALL BILLS</Text>
+          <Text style={styles.allBillsText}>{feedMode === 'historical' ? 'ALL HISTORICAL' : 'ALL UPCOMING'}</Text>
           <Text style={styles.allBillsArrow}>►</Text>
         </TouchableOpacity>
 
@@ -1312,6 +1332,11 @@ function SwipeCard({ measure, onVote }: { measure: Measure; onVote: (vote: 'yea'
           <View style={[styles.typeBadge, { backgroundColor: levelInfo.color }]}>
             <Text style={styles.typeBadgeText}>{levelInfo.type} {levelInfo.name}</Text>
           </View>
+          {(measure.status === 'passed' || measure.status === 'failed') && (
+            <View style={[styles.outcomeBadge, { backgroundColor: measure.status === 'passed' ? '#2e8b57' : GBC.red }]}>
+              <Text style={styles.outcomeBadgeText}>{measure.status === 'passed' ? '✓ PASSED' : '✗ FAILED'}</Text>
+            </View>
+          )}
           {wasSkipped && (
             <View style={styles.skippedBadgeGbc}>
               <Text style={styles.skippedBadgeText}>◄ SKIPPED</Text>
@@ -1374,7 +1399,7 @@ function SwipeCard({ measure, onVote }: { measure: Measure; onVote: (vote: 'yea'
 }
 
 // Feed Screen - Pokemon Battle Style
-function FeedScreen({ user, onNavigate, selectedCategory, onClearCategory }: { user: User; onNavigate: (screen: string, options?: { scrollToCategories?: boolean }) => void; selectedCategory: Category | null; onClearCategory: () => void }) {
+function FeedScreen({ user, onNavigate, selectedCategory, onClearCategory, feedMode, onSetFeedMode }: { user: User; onNavigate: (screen: string, options?: { scrollToCategories?: boolean }) => void; selectedCategory: Category | null; onClearCategory: () => void; feedMode: 'upcoming' | 'historical'; onSetFeedMode: (mode: 'upcoming' | 'historical') => void }) {
   const [measures, setMeasures] = useState<Measure[]>([]);
   const [currentIndex, setCurrentIndex] = useState(0);
   const [isLoading, setIsLoading] = useState(true);
@@ -1382,13 +1407,13 @@ function FeedScreen({ user, onNavigate, selectedCategory, onClearCategory }: { u
 
   useEffect(() => {
     loadMeasures();
-  }, [selectedCategory]);
+  }, [selectedCategory, feedMode]);
 
   const loadMeasures = async () => {
     setIsLoading(true);
     setCurrentIndex(0);
     try {
-      let url = `${API_BASE_URL}/feed?limit=30&include_skipped=true`;
+      let url = `${API_BASE_URL}/feed?limit=30&include_skipped=true&mode=${feedMode}`;
 
       // If category is selected, add topic filter for each topic in the category
       if (selectedCategory && selectedCategory.topics.length > 0) {
@@ -1458,6 +1483,21 @@ function FeedScreen({ user, onNavigate, selectedCategory, onClearCategory }: { u
 
   return (
     <View style={styles.feedGbcContainer}>
+      {/* Feed Mode Toggle */}
+      <View style={styles.filterTabsGbc}>
+        {(['upcoming', 'historical'] as const).map((m) => (
+          <TouchableOpacity
+            key={m}
+            style={[styles.filterTabGbc, feedMode === m && styles.filterTabGbcActive]}
+            onPress={() => onSetFeedMode(m)}
+          >
+            <Text style={[styles.filterTabTextGbc, feedMode === m && styles.filterTabTextGbcActive]}>
+              {m === 'upcoming' ? '📋 UPCOMING' : '📜 HISTORICAL'}
+            </Text>
+          </TouchableOpacity>
+        ))}
+      </View>
+
       {/* Category Header */}
       {selectedCategory && (
         <View style={styles.categoryHeader}>
@@ -1529,6 +1569,7 @@ function MainApp({ user, onLogout }: { user: User; onLogout: () => void }) {
   const [menuOpen, setMenuOpen] = useState(false);
   const [selectedCategory, setSelectedCategory] = useState<Category | null>(null);
   const [scrollToCategories, setScrollToCategories] = useState(false);
+  const [feedMode, setFeedMode] = useState<'upcoming' | 'historical'>('upcoming');
   const slideAnim = useRef(new Animated.Value(300)).current;
 
   const openMenu = () => {
@@ -1581,13 +1622,13 @@ function MainApp({ user, onLogout }: { user: User; onLogout: () => void }) {
   const renderScreen = () => {
     switch (currentScreen) {
       case 'home':
-        return <HomeScreen user={user} onNavigate={handleNavigate} onSelectCategory={handleSelectCategory} scrollToCategories={scrollToCategories} />;
+        return <HomeScreen user={user} onNavigate={handleNavigate} onSelectCategory={handleSelectCategory} scrollToCategories={scrollToCategories} feedMode={feedMode} onSetFeedMode={setFeedMode} />;
       case 'feed':
-        return <FeedScreen user={user} onNavigate={handleNavigate} selectedCategory={selectedCategory} onClearCategory={handleClearCategory} />;
+        return <FeedScreen user={user} onNavigate={handleNavigate} selectedCategory={selectedCategory} onClearCategory={handleClearCategory} feedMode={feedMode} onSetFeedMode={setFeedMode} />;
       case 'history':
         return <HistoryScreen user={user} onNavigate={handleNavigate} />;
       default:
-        return <HomeScreen user={user} onNavigate={handleNavigate} onSelectCategory={handleSelectCategory} scrollToCategories={scrollToCategories} />;
+        return <HomeScreen user={user} onNavigate={handleNavigate} onSelectCategory={handleSelectCategory} scrollToCategories={scrollToCategories} feedMode={feedMode} onSetFeedMode={setFeedMode} />;
     }
   };
 
@@ -1719,11 +1760,12 @@ const styles = StyleSheet.create({
   },
   gbcMainContainer: {
     flex: 1,
-    backgroundColor: GBC.white,
+    backgroundColor: GBC.screenBg,
   },
   gbcScrollView: {
     flex: 1,
     padding: 12,
+    backgroundColor: GBC.screenBg,
   },
   gbcContent: {
     flex: 1,
@@ -2220,7 +2262,7 @@ const styles = StyleSheet.create({
     flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: GBC.white,
+    backgroundColor: GBC.screenBg,
   },
   loadingPixel: {
     fontSize: 18,
@@ -2310,6 +2352,32 @@ const styles = StyleSheet.create({
   // Category Selection
   categoryBox: {
     marginBottom: 12,
+  },
+  feedModeToggle: {
+    flexDirection: 'row',
+    marginBottom: 12,
+    gap: 8,
+  },
+  feedModeBtn: {
+    flex: 1,
+    paddingVertical: 10,
+    alignItems: 'center',
+    backgroundColor: GBC.tan,
+    borderWidth: 3,
+    borderColor: GBC.darkTan,
+  },
+  feedModeBtnActive: {
+    backgroundColor: GBC.blue,
+    borderColor: GBC.darkBlue,
+  },
+  feedModeBtnText: {
+    fontSize: 12,
+    fontWeight: 'bold',
+    color: GBC.darkGreen,
+    fontFamily: Platform.OS === 'ios' ? 'Courier' : 'monospace',
+  },
+  feedModeBtnTextActive: {
+    color: GBC.white,
   },
   allBillsButton: {
     flexDirection: 'row',
@@ -2427,7 +2495,7 @@ const styles = StyleSheet.create({
   // Feed Screen
   feedGbcContainer: {
     flex: 1,
-    backgroundColor: GBC.white,
+    backgroundColor: GBC.screenBg,
   },
   progressBarContainer: {
     flexDirection: 'row',
@@ -2519,6 +2587,18 @@ const styles = StyleSheet.create({
     fontSize: 10,
     fontWeight: 'bold',
     color: GBC.black,
+    fontFamily: Platform.OS === 'ios' ? 'Courier' : 'monospace',
+  },
+  outcomeBadge: {
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderWidth: 2,
+    borderColor: GBC.black,
+  },
+  outcomeBadgeText: {
+    fontSize: 10,
+    fontWeight: 'bold',
+    color: GBC.white,
     fontFamily: Platform.OS === 'ios' ? 'Courier' : 'monospace',
   },
   billName: {
@@ -2654,7 +2734,7 @@ const styles = StyleSheet.create({
   // History Screen
   historyGbcContainer: {
     flex: 1,
-    backgroundColor: GBC.white,
+    backgroundColor: GBC.screenBg,
   },
   filterTabsGbc: {
     flexDirection: 'row',

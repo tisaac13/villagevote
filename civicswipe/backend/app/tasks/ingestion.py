@@ -24,23 +24,24 @@ def run_async(coro):
 
 
 @celery_app.task(bind=True, name="app.tasks.ingestion.ingest_federal_data")
-def ingest_federal_data(self, congress: int = 118, limit: int = 50) -> Dict[str, Any]:
+def ingest_federal_data(self, congress: int = 119, limit: int = 50, fetch_all: bool = False) -> Dict[str, Any]:
     """
     Ingest federal legislation data from Congress.gov.
 
     Args:
-        congress: Congress number (default: 118)
-        limit: Maximum bills to fetch
+        congress: Congress number (default: 119)
+        limit: Maximum bills to fetch per page
+        fetch_all: If True, paginate through ALL bills
 
     Returns:
         Ingestion statistics
     """
-    logger.info(f"Starting federal data ingestion (congress={congress}, limit={limit})")
+    logger.info(f"Starting federal data ingestion (congress={congress}, limit={limit}, fetch_all={fetch_all})")
 
     async def _run():
         from app.connectors.federal import run_federal_connector
         async with async_session_maker() as db:
-            stats = await run_federal_connector(db, congress=congress, limit=limit)
+            stats = await run_federal_connector(db, congress=congress, limit=limit, fetch_all=fetch_all)
             return stats
 
     try:
@@ -49,6 +50,44 @@ def ingest_federal_data(self, congress: int = 118, limit: int = 50) -> Dict[str,
         return stats
     except Exception as e:
         logger.error(f"Federal ingestion failed: {e}")
+        raise self.retry(exc=e, countdown=60, max_retries=3)
+
+
+@celery_app.task(bind=True, name="app.tasks.ingestion.ingest_roll_call_votes")
+def ingest_roll_call_votes(self, congress: int = 119, session: int = 1) -> Dict[str, Any]:
+    """
+    Ingest roll call votes from House Clerk XML and Senate XML.
+
+    Args:
+        congress: Congress number (default: 119)
+        session: Session number (1 or 2)
+
+    Returns:
+        Combined ingestion statistics
+    """
+    logger.info(f"Starting roll call vote ingestion (congress={congress}, session={session})")
+
+    async def _run():
+        from app.services.roll_call_votes import RollCallVoteService
+        async with async_session_maker() as db:
+            service = RollCallVoteService(db)
+            try:
+                house_stats = await service.ingest_house_votes(congress=congress, session=session)
+                senate_stats = await service.ingest_senate_votes(congress=congress, session=session)
+                await db.commit()
+                return {
+                    "house": house_stats,
+                    "senate": senate_stats,
+                }
+            finally:
+                await service.close()
+
+    try:
+        stats = run_async(_run())
+        logger.info(f"Roll call vote ingestion completed: {stats}")
+        return stats
+    except Exception as e:
+        logger.error(f"Roll call vote ingestion failed: {e}")
         raise self.retry(exc=e, countdown=60, max_retries=3)
 
 
@@ -124,10 +163,17 @@ def ingest_all_sources(self) -> Dict[str, Dict[str, Any]]:
 
     # Federal
     try:
-        results["federal"] = ingest_federal_data(congress=118, limit=100)
+        results["federal"] = ingest_federal_data(congress=119, limit=250, fetch_all=True)
     except Exception as e:
         logger.error(f"Federal ingestion failed: {e}")
         results["federal"] = {"error": str(e)}
+
+    # Roll call votes (House + Senate)
+    try:
+        results["roll_call_votes"] = ingest_roll_call_votes(congress=119, session=1)
+    except Exception as e:
+        logger.error(f"Roll call vote ingestion failed: {e}")
+        results["roll_call_votes"] = {"error": str(e)}
 
     # Arizona
     try:
