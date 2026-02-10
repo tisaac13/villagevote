@@ -231,6 +231,7 @@ class FeedCard(BaseModel):
 class FeedResponse(BaseModel):
     items: List[FeedCard]
     next_cursor: Optional[str] = None
+    total_remaining: int = 0  # Total unvoted bills matching current filters (not just this batch)
 
 
 # Measure detail schemas

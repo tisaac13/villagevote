@@ -169,20 +169,52 @@ async def get_feed(
     if topic:
         base_stmt = base_stmt.where(Measure.topic_tags.contains([topic]))
 
-    # First: Get unvoted measures (priority)
-    unvoted_stmt = base_stmt.where(~Measure.id.in_(list(user_votes.keys()))) if user_votes else base_stmt
+    # Parse cursor — it's a simple integer offset (base-10 string)
+    offset = 0
+    if cursor:
+        try:
+            offset = int(cursor)
+        except ValueError:
+            offset = 0
 
-    # Sort: historical by updated_at DESC (most recently resolved first), upcoming by scheduled date
+    # Build unvoted query (excludes yes/no votes; skips handled separately)
+    unvoted_base = base_stmt.where(~Measure.id.in_(list(user_votes.keys()))) if user_votes else base_stmt
+
+    # Count total unvoted measures remaining (for progress bar)
+    count_stmt = select(func.count(Measure.id)).where(
+        Measure.level == "federal",
+        Measure.summary_short != "Procedural item - no action needed from voters."
+    )
+    # Re-apply mode filter for count
+    if mode == FeedMode.UPCOMING:
+        count_stmt = count_stmt.where(Measure.status.in_(upcoming_statuses))
+    elif mode == FeedMode.HISTORICAL:
+        count_stmt = count_stmt.where(Measure.status.in_(historical_statuses))
+    if level:
+        count_stmt = count_stmt.where(Measure.level == level.value)
+    if topic:
+        count_stmt = count_stmt.where(Measure.topic_tags.contains([topic]))
+    # Exclude already-voted (yes/no) measures from the count
+    if user_votes:
+        voted_final_ids = [mid for mid, vote in user_votes.items() if vote in ("yes", "no")]
+        if voted_final_ids:
+            count_stmt = count_stmt.where(~Measure.id.in_(voted_final_ids))
+    count_result = await db.execute(count_stmt)
+    total_remaining = count_result.scalar() or 0
+
+    # Sort: historical by updated_at DESC, upcoming by scheduled date
     if mode == FeedMode.HISTORICAL:
-        unvoted_stmt = unvoted_stmt.order_by(Measure.updated_at.desc())
+        unvoted_sorted = unvoted_base.order_by(Measure.updated_at.desc())
     else:
-        unvoted_stmt = unvoted_stmt.order_by(Measure.scheduled_for.asc().nullslast(), Measure.updated_at.desc())
-    unvoted_stmt = unvoted_stmt.limit(limit)
+        unvoted_sorted = unvoted_base.order_by(Measure.scheduled_for.asc().nullslast(), Measure.updated_at.desc())
 
-    result = await db.execute(unvoted_stmt)
+    # Apply offset + limit for pagination
+    unvoted_sorted = unvoted_sorted.offset(offset).limit(limit)
+
+    result = await db.execute(unvoted_sorted)
     unvoted_measures = list(result.scalars().all())
 
-    # Second: If we have room and include_skipped is True, add skipped measures
+    # If we have room and include_skipped is True, add skipped measures
     skipped_measures = []
     if include_skipped and len(unvoted_measures) < limit and skipped_ids:
         remaining = limit - len(unvoted_measures)
@@ -195,6 +227,11 @@ async def get_feed(
 
     # Combine: unvoted first, then skipped
     all_measures = unvoted_measures + skipped_measures
+
+    # Determine next cursor — if we got a full page, there are likely more
+    next_cursor_val = None
+    if len(unvoted_measures) == limit:
+        next_cursor_val = str(offset + limit)
 
     # Batch-load all sources in ONE query instead of N+1
     measure_ids = [m.id for m in all_measures]
@@ -228,7 +265,7 @@ async def get_feed(
             external_id=measure.external_id
         ))
 
-    return FeedResponse(items=items, next_cursor=None)
+    return FeedResponse(items=items, next_cursor=next_cursor_val, total_remaining=total_remaining)
 
 
 @router.get("/measures/{measure_id}", response_model=MeasureDetail)
