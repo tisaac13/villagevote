@@ -94,9 +94,9 @@ export function ProfileScreen() {
 
         {/* About Card */}
         <View style={styles.card}>
-          <Text style={styles.cardTitle}>About CivicSwipe</Text>
+          <Text style={styles.cardTitle}>About RepCheck</Text>
           <Text style={styles.aboutText}>
-            CivicSwipe helps you stay informed about legislation at all levels
+            RepCheck helps you stay informed about legislation at all levels
             of government. Swipe right to support, left to oppose, and see how
             your positions align with your elected representatives.
           </Text>

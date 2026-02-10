@@ -1,5 +1,5 @@
 """
-CivicSwipe Backend API
+RepCheck Backend API
 Main application entry point
 """
 from fastapi import FastAPI, Request
@@ -24,7 +24,7 @@ logger = get_logger(__name__)
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application lifespan handler"""
-    logger.info("Starting CivicSwipe API...")
+    logger.info("Starting RepCheck API...")
 
     # Initialize Sentry for error tracking
     init_sentry()
@@ -49,7 +49,7 @@ async def lifespan(app: FastAPI):
     await congress_api_service.shutdown()
     await geocoding_service.shutdown()
     await close_redis()
-    logger.info("Shutting down CivicSwipe API...")
+    logger.info("Shutting down RepCheck API...")
 
 
 # Disable OpenAPI docs in production to reduce attack surface
@@ -59,7 +59,7 @@ _is_production = settings.ENVIRONMENT == "production"
 app = FastAPI(
     title=settings.PROJECT_NAME,
     version=settings.VERSION,
-    description="API for CivicSwipe - Legislative tracking and voting app",
+    description="API for RepCheck - Legislative tracking and voting app",
     docs_url=None if _is_production else "/docs",
     redoc_url=None if _is_production else "/redoc",
     openapi_url=None if _is_production else "/openapi.json",

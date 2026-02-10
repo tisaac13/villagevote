@@ -1,6 +1,6 @@
 /**
  * API Service
- * Handles all HTTP requests to the CivicSwipe backend
+ * Handles all HTTP requests to the RepCheck backend
  */
 import axios, { AxiosInstance, AxiosError } from 'axios';
 import * as SecureStore from 'expo-secure-store';
@@ -19,7 +19,7 @@ import {
 // API base URL - change for production
 const API_BASE_URL = __DEV__
   ? 'http://localhost:8000'
-  : 'https://api.civicswipe.com';
+  : 'https://api.repcheck.us';
 
 // Token storage keys
 const ACCESS_TOKEN_KEY = 'access_token';

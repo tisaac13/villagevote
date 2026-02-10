@@ -106,7 +106,7 @@ export function FeedScreen() {
     <SafeAreaView style={styles.container}>
       {/* Header */}
       <View style={styles.header}>
-        <Text style={styles.headerTitle}>CivicSwipe</Text>
+        <Text style={styles.headerTitle}>RepCheck</Text>
         <Text style={styles.headerSubtitle}>
           {measures.length - currentIndex} measures remaining
         </Text>

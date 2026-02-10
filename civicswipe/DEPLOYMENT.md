@@ -1,6 +1,6 @@
-# CivicSwipe Deployment Guide
+# RepCheck Deployment Guide
 
-This guide covers deploying CivicSwipe to production.
+This guide covers deploying RepCheck to production.
 
 ## Quick Start
 

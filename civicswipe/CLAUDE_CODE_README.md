@@ -1,4 +1,4 @@
-# CivicSwipe - Claude Code Import Guide
+# RepCheck - Claude Code Import Guide
 
 ## 🎯 Quick Start in Claude Code
 

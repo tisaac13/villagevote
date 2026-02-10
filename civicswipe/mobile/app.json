@@ -1,7 +1,7 @@
 {
   "expo": {
-    "name": "CivicSwipe",
-    "slug": "civicswipe",
+    "name": "RepCheck",
+    "slug": "repcheck",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
@@ -14,14 +14,14 @@
     "assetBundlePatterns": ["**/*"],
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "com.civicswipe.app"
+      "bundleIdentifier": "com.repcheck.app"
     },
     "android": {
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundColor": "#1a365d"
       },
-      "package": "com.civicswipe.app"
+      "package": "com.repcheck.app"
     },
     "web": {
       "favicon": "./assets/favicon.png"

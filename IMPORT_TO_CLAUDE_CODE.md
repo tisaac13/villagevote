@@ -1,4 +1,4 @@
-# 🚀 CivicSwipe - Import to Claude Code
+# 🚀 RepCheck - Import to Claude Code
 
 ## Quick Start (2 minutes)
 
