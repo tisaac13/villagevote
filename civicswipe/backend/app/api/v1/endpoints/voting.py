@@ -8,6 +8,7 @@ from uuid import UUID
 from typing import Optional
 
 from app.core.database import get_db
+from app.core.cache import cache_delete, reps_key
 from app.schemas import SwipeRequest, SwipeResponse, UserVote as UserVoteSchema
 from app.models import Measure, UserVote
 from app.api.v1.endpoints.profile import get_current_user
@@ -50,7 +51,10 @@ async def swipe(
         existing_vote.vote = swipe_data.vote.value
         await db.commit()
         await db.refresh(existing_vote)
-        
+
+        # Invalidate representatives cache so alignment recomputes
+        await cache_delete(reps_key(current_user.id))
+
         return SwipeResponse(
             saved=True,
             user_vote=UserVoteSchema(
@@ -68,7 +72,10 @@ async def swipe(
         db.add(new_vote)
         await db.commit()
         await db.refresh(new_vote)
-        
+
+        # Invalidate representatives cache so alignment recomputes
+        await cache_delete(reps_key(current_user.id))
+
         return SwipeResponse(
             saved=True,
             user_vote=UserVoteSchema(

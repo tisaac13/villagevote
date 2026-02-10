@@ -25,6 +25,7 @@ class Official(Base):
     district_label = Column(String, nullable=True)  # e.g., "CD-03", "LD-05", "District 7"
     photo_url = Column(String, nullable=True)  # Official portrait URL
     bioguide_id = Column(String, nullable=True, index=True)  # Congress bioguide ID
+    lis_member_id = Column(String, nullable=True, index=True)  # Senate LIS member ID (e.g. "S354")
     updated_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now())
     
     # Relationships
