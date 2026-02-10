@@ -112,9 +112,10 @@ async def get_feed(
     cursor: Optional[str] = Query(None),
     limit: int = Query(20, ge=1, le=50),
     level: Optional[JurisdictionLevel] = Query(None),
-    status: Optional[MeasureStatus] = Query(None),  # None means show all statuses
+    bill_status: Optional[MeasureStatus] = Query(None, alias="status"),  # renamed to avoid shadowing fastapi.status
     mode: Optional[FeedMode] = Query(None, description="Filter by upcoming or historical bills"),
     topic: Optional[str] = Query(None),
+    category: Optional[str] = Query(None, description="Category name — expands to all topics in that category"),
     include_skipped: bool = Query(True, description="Include previously skipped items at end"),
     current_user = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
@@ -124,12 +125,19 @@ async def get_feed(
     Returns measures relevant to user's divisions, ranked by scheduled date
     Skipped items are recycled to the end of the feed
     """
-    # Validate topic parameter against known values to prevent injection
-    if topic and topic not in VALID_TOPICS:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Invalid topic. Must be one of: {', '.join(sorted(VALID_TOPICS))}"
-        )
+    # Resolve category name to list of topics (OR logic across all sub-topics)
+    # If both category and topic are provided, category takes precedence
+    resolved_topics = []  # type: list
+    if category and category in CATEGORY_MAPPING:
+        resolved_topics = CATEGORY_MAPPING[category]
+    elif topic:
+        # Validate single topic against known values
+        if topic not in VALID_TOPICS:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Invalid topic. Must be one of: {', '.join(sorted(VALID_TOPICS))}"
+            )
+        resolved_topics = [topic]
 
     # Get user's divisions
     stmt = select(UserDivision.division_id).where(UserDivision.user_id == current_user.id)
@@ -164,10 +172,11 @@ async def get_feed(
     # Apply other filters
     if level:
         base_stmt = base_stmt.where(Measure.level == level.value)
-    if status:
-        base_stmt = base_stmt.where(Measure.status == status.value)
-    if topic:
-        base_stmt = base_stmt.where(Measure.topic_tags.contains([topic]))
+    if bill_status:
+        base_stmt = base_stmt.where(Measure.status == bill_status.value)
+    if resolved_topics:
+        topic_conditions = [Measure.topic_tags.any(t) for t in resolved_topics]
+        base_stmt = base_stmt.where(or_(*topic_conditions))
 
     # Parse cursor — it's a simple integer offset (base-10 string)
     offset = 0
@@ -192,8 +201,9 @@ async def get_feed(
         count_stmt = count_stmt.where(Measure.status.in_(historical_statuses))
     if level:
         count_stmt = count_stmt.where(Measure.level == level.value)
-    if topic:
-        count_stmt = count_stmt.where(Measure.topic_tags.contains([topic]))
+    if resolved_topics:
+        topic_count_conditions = [Measure.topic_tags.any(t) for t in resolved_topics]
+        count_stmt = count_stmt.where(or_(*topic_count_conditions))
     # Exclude already-voted (yes/no) measures from the count
     if user_votes:
         voted_final_ids = [mid for mid, vote in user_votes.items() if vote in ("yes", "no")]
