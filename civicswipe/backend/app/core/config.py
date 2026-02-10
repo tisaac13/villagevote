@@ -42,7 +42,7 @@ class Settings(BaseSettings):
     SECRET_KEY: str = "your-secret-key-change-in-production"
     ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
-    REFRESH_TOKEN_EXPIRE_DAYS: int = 7
+    REFRESH_TOKEN_EXPIRE_DAYS: int = 1  # Short-lived refresh tokens — rotated on each use
     
     # Encryption key for address encryption
     ENCRYPTION_KEY: str = "your-encryption-key-change-in-production"
@@ -56,6 +56,9 @@ class Settings(BaseSettings):
     # AI Services
     OPENAI_API_KEY: str = ""
     ANTHROPIC_API_KEY: str = ""
+
+    # Admin
+    ADMIN_EMAILS: str = ""  # Comma-separated list of admin email addresses
 
     # Monitoring
     SENTRY_DSN: str = ""
@@ -81,3 +84,21 @@ class Settings(BaseSettings):
 
 # Create settings instance
 settings = Settings()
+
+# Startup safety check: reject insecure defaults outside development
+_INSECURE_DEFAULTS = {
+    "your-secret-key-change-in-production",
+    "your-encryption-key-change-in-production",
+}
+
+if settings.ENVIRONMENT != "development":
+    if settings.SECRET_KEY in _INSECURE_DEFAULTS:
+        raise RuntimeError(
+            "SECRET_KEY is set to the insecure default. "
+            "Set a strong random SECRET_KEY environment variable before running in production."
+        )
+    if settings.ENCRYPTION_KEY in _INSECURE_DEFAULTS:
+        raise RuntimeError(
+            "ENCRYPTION_KEY is set to the insecure default. "
+            "Set a strong random ENCRYPTION_KEY environment variable before running in production."
+        )

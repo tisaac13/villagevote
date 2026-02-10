@@ -52,28 +52,33 @@ async def lifespan(app: FastAPI):
     logger.info("Shutting down CivicSwipe API...")
 
 
+# Disable OpenAPI docs in production to reduce attack surface
+_is_production = settings.ENVIRONMENT == "production"
+
 # Create FastAPI application
 app = FastAPI(
     title=settings.PROJECT_NAME,
     version=settings.VERSION,
     description="API for CivicSwipe - Legislative tracking and voting app",
-    docs_url="/docs",
-    redoc_url="/redoc",
-    openapi_url="/openapi.json",
+    docs_url=None if _is_production else "/docs",
+    redoc_url=None if _is_production else "/redoc",
+    openapi_url=None if _is_production else "/openapi.json",
     lifespan=lifespan
 )
 
-# Configure CORS
+# Configure CORS — restrict to actual HTTP methods and headers used by the app
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.CORS_ORIGINS,
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type", "X-Request-ID", "X-Admin-Key"],
+    expose_headers=["X-Request-ID"],
+    max_age=600,  # Cache preflight for 10 minutes
 )
 
 
-# Rate limiting middleware (simple per-IP, 60 req/min)
+# Rate limiting middleware — global + stricter limits for sensitive endpoints
 @app.middleware("http")
 async def rate_limit(request: Request, call_next):
     """Per-IP rate limiting via Redis. Passes through if Redis is down."""
@@ -82,8 +87,23 @@ async def rate_limit(request: Request, call_next):
     client_ip = request.client.host if request.client else "unknown"
     r = await get_redis()
     if r is not None:
-        key = f"rl:{client_ip}"
         try:
+            path = request.url.path
+
+            # Stricter rate limits for auth endpoints (brute-force protection)
+            if path.endswith("/auth/login") or path.endswith("/auth/signup"):
+                auth_key = f"rl:auth:{client_ip}"
+                auth_count = await r.incr(auth_key)
+                if auth_count == 1:
+                    await r.expire(auth_key, 300)  # 5 minute window
+                if auth_count > 10:  # 10 auth attempts per 5 minutes
+                    return JSONResponse(
+                        status_code=429,
+                        content={"detail": "Too many authentication attempts. Try again in a few minutes."}
+                    )
+
+            # Global rate limit
+            key = f"rl:{client_ip}"
             count = await r.incr(key)
             if count == 1:
                 await r.expire(key, 60)
@@ -136,6 +156,21 @@ async def log_requests(request: Request, call_next):
     return response
 
 
+# Security headers middleware
+@app.middleware("http")
+async def security_headers(request: Request, call_next):
+    """Add standard security headers to every response."""
+    response = await call_next(request)
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+    response.headers["X-XSS-Protection"] = "1; mode=block"
+    if _is_production:
+        response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+    response.headers["Cache-Control"] = "no-store"
+    return response
+
+
 # Global exception handler
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception):
@@ -169,10 +204,14 @@ async def health_check():
     }
 
 
-# Metrics endpoint
-@app.get("/api/v1/metrics", tags=["Monitoring"])
-async def get_metrics():
-    """Get application metrics"""
+# Metrics endpoint — hidden in production, requires admin API key
+@app.get("/api/v1/metrics", tags=["Monitoring"], include_in_schema=not _is_production)
+async def get_metrics(request: Request):
+    """Get application metrics (requires X-Admin-Key header in production)"""
+    if _is_production:
+        admin_key = request.headers.get("X-Admin-Key")
+        if not admin_key or admin_key != settings.SECRET_KEY:
+            return JSONResponse(status_code=403, content={"detail": "Forbidden"})
     return metrics.get_all()
 
 

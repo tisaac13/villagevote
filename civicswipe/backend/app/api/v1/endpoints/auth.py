@@ -2,9 +2,11 @@
 Authentication endpoints
 """
 from fastapi import APIRouter, Depends, HTTPException, status
+from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from datetime import datetime
+from typing import Optional
 
 from app.core.database import get_db
 from app.core.security import (
@@ -14,7 +16,9 @@ from app.core.security import (
     create_refresh_token,
     verify_token,
     encrypt_address,
-    hash_address
+    hash_address,
+    blacklist_token,
+    is_token_blacklisted,
 )
 from app.schemas import (
     UserSignup,
@@ -42,14 +46,14 @@ async def signup(
     - Creates address hash for deduplication
     - Initiates background job for geocoding and division resolution
     """
-    # Check if user already exists
+    # Check if user already exists — use generic message to prevent user enumeration
     existing_user = await db.execute(
         select(User).where(User.email == user_data.email)
     )
     if existing_user.scalar_one_or_none():
         raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Email already registered"
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Unable to create account with this information"
         )
 
     # Create user with basic info
@@ -82,8 +86,8 @@ async def signup(
         )
         if existing_profile.scalar_one_or_none():
             raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="An account with this address already exists"
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Unable to create account with this information"
             )
 
         user_profile = UserProfile(
@@ -123,7 +127,8 @@ async def signup(
             email=new_user.email,
             first_name=new_user.first_name,
             last_name=new_user.last_name,
-            state=new_user.state
+            state=new_user.state,
+            birthday=new_user.birthday.date() if hasattr(new_user.birthday, 'date') else new_user.birthday,
         ),
         tokens=Tokens(access_token=access_token, refresh_token=refresh_token),
         location=LocationResolution(
@@ -183,8 +188,16 @@ async def refresh(
     db: AsyncSession = Depends(get_db)
 ):
     """
-    Refresh access token using refresh token
+    Refresh access token using refresh token.
+    Implements token rotation — the old refresh token is blacklisted.
     """
+    # Check if the refresh token has been revoked (replay detection)
+    if await is_token_blacklisted(token_data.refresh_token):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Refresh token has been revoked"
+        )
+
     payload = verify_token(token_data.refresh_token, token_type="refresh")
 
     if not payload:
@@ -207,6 +220,9 @@ async def refresh(
             detail="User not found"
         )
 
+    # Blacklist the old refresh token (rotation — each refresh token is single-use)
+    await blacklist_token(token_data.refresh_token)
+
     # Create new tokens
     access_token = create_access_token(data={"sub": user_id})
     refresh_token = create_refresh_token(data={"sub": user_id})
@@ -217,9 +233,22 @@ async def refresh(
     )
 
 
+class LogoutRequest(BaseModel):
+    """Optional body — include tokens to revoke them server-side."""
+    access_token: Optional[str] = None
+    refresh_token: Optional[str] = None
+
+
 @router.post("/logout")
-async def logout():
+async def logout(body: Optional[LogoutRequest] = None):
     """
-    Logout user (client should discard tokens)
+    Logout user — blacklists provided tokens so they can't be reused.
+    Client should also discard tokens locally.
     """
+    if body:
+        if body.access_token:
+            await blacklist_token(body.access_token, ttl_seconds=1800)  # 30 min (access token lifetime)
+        if body.refresh_token:
+            await blacklist_token(body.refresh_token)
+
     return {"message": "Logged out successfully"}

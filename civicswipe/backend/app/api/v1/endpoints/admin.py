@@ -7,25 +7,37 @@ from sqlalchemy import select
 from typing import List
 
 from app.core.database import get_db
+from app.core.config import settings
+from app.api.deps import get_current_user
+from app.models import User, Connector, IngestionRun
 from app.schemas import (
     Connector as ConnectorSchema,
     ConnectorCreate,
     IngestionRunRequest,
     IngestionRunResponse
 )
-from app.models import Connector, IngestionRun
 
 router = APIRouter()
 
+# Admin emails — loaded from ADMIN_EMAILS env var (comma-separated)
+ADMIN_EMAILS = set(
+    e.strip().lower()
+    for e in getattr(settings, "ADMIN_EMAILS", "").split(",")
+    if e.strip()
+)
 
-async def require_admin(db: AsyncSession = Depends(get_db)):
+
+async def require_admin(current_user: User = Depends(get_current_user)):
     """
-    Dependency to require admin privileges
-    TODO: Implement actual admin check from JWT token
+    Dependency to require admin privileges.
+    Validates JWT then checks email against allowlist.
     """
-    # TODO: Check if user has admin role
-    # For now, allow all requests (development only)
-    pass
+    if not current_user.email or current_user.email.lower() not in ADMIN_EMAILS:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Admin privileges required"
+        )
+    return current_user
 
 
 @router.get("/connectors", response_model=List[ConnectorSchema])

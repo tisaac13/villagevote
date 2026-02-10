@@ -6,6 +6,7 @@ from typing import Optional, List
 from datetime import datetime, date
 from enum import Enum
 from uuid import UUID
+import re
 
 
 # Enums
@@ -128,6 +129,7 @@ class UserResponse(BaseModel):
     first_name: str
     last_name: str
     state: str
+    birthday: Optional[date] = None
 
 
 class LocationResolution(BaseModel):
@@ -158,6 +160,51 @@ class ProfileResponse(BaseModel):
     address: Optional[AddressPublic] = None
     location: Location
     preferences: Preferences
+
+
+class ProfileUpdateRequest(BaseModel):
+    """Request to update user profile fields. All fields optional — only provided fields are updated."""
+    first_name: Optional[str] = Field(None, min_length=1, max_length=100)
+    last_name: Optional[str] = Field(None, min_length=1, max_length=100)
+    email: Optional[EmailStr] = None
+    birthday: Optional[date] = None
+    current_password: Optional[str] = Field(None, description="Required when changing email")
+
+    @field_validator('first_name', 'last_name', mode='before')
+    @classmethod
+    def sanitize_name(cls, v):
+        if v is None:
+            return v
+        # Strip HTML tags
+        v = re.sub(r'<[^>]+>', '', v)
+        # Strip leading/trailing whitespace
+        v = v.strip()
+        # Reject if empty after stripping
+        if not v:
+            raise ValueError('Name cannot be empty')
+        # Only allow letters, spaces, hyphens, apostrophes, periods
+        if not re.match(r"^[a-zA-Z\s\-'.]+$", v):
+            raise ValueError('Name contains invalid characters')
+        return v
+
+    @field_validator('birthday')
+    @classmethod
+    def validate_birthday(cls, v):
+        if v is None:
+            return v
+        today = date.today()
+        age = today.year - v.year - ((today.month, today.day) < (v.month, v.day))
+        if age < 13:
+            raise ValueError('Must be at least 13 years old')
+        if age > 120:
+            raise ValueError('Invalid birthday')
+        return v
+
+
+class ProfileUpdateResponse(BaseModel):
+    updated: bool
+    changed_fields: List[str]
+    user: UserResponse
 
 
 # Feed schemas
