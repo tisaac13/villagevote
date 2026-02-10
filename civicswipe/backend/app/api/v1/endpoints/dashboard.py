@@ -15,6 +15,44 @@ from app.api.v1.endpoints.profile import get_current_user
 
 router = APIRouter()
 
+# Chamber filter expressions for federal measures
+_is_federal = Measure.level == "federal"
+_is_house = and_(
+    _is_federal,
+    (
+        Measure.external_id.like("%-hr-%")
+        | Measure.external_id.like("%-hjres-%")
+        | Measure.external_id.like("%-hconres-%")
+        | Measure.external_id.like("%-hres-%")
+    ),
+)
+_is_senate = and_(
+    _is_federal,
+    (
+        Measure.external_id.like("%-s-%")
+        | Measure.external_id.like("%-sjres-%")
+        | Measure.external_id.like("%-sconres-%")
+        | Measure.external_id.like("%-sres-%")
+    ),
+)
+_alignment_match = (
+    ((UserVote.vote == "yes") & (Measure.status == "passed"))
+    | ((UserVote.vote == "no") & (Measure.status == "failed"))
+)
+_has_outcome = Measure.status.in_(["passed", "failed"])
+
+
+def _alignment_cols(chamber_filter, prefix: str):
+    """Return (matches, total) aggregate columns for a chamber filter."""
+    return [
+        func.count(
+            case((and_(chamber_filter, _has_outcome, _alignment_match), 1))
+        ).label(f"{prefix}_matches"),
+        func.count(
+            case((and_(chamber_filter, _has_outcome), 1))
+        ).label(f"{prefix}_total"),
+    ]
+
 
 @router.get("/dashboard", response_model=DashboardResponse)
 async def get_dashboard(
@@ -50,22 +88,13 @@ async def get_dashboard(
                     )
                 )
             ).label("measures_pending"),
-            # Alignment numerator: user voted yes & passed, or user voted no & failed
-            func.count(
-                case(
-                    (
-                        (UserVote.vote == "yes") & (Measure.status == "passed")
-                        | (UserVote.vote == "no") & (Measure.status == "failed"),
-                        1,
-                    )
-                )
-            ).label("alignment_matches"),
-            # Alignment denominator: measures with a definitive outcome
-            func.count(
-                case(
-                    (Measure.status.in_(["passed", "failed"]), 1)
-                )
-            ).label("alignment_total"),
+            # Overall alignment
+            func.count(case((_alignment_match, 1))).label("alignment_matches"),
+            func.count(case((_has_outcome, 1))).label("alignment_total"),
+            # Chamber-level alignment
+            *_alignment_cols(_is_house, "house"),
+            *_alignment_cols(_is_senate, "senate"),
+            *_alignment_cols(_is_federal, "congress"),
         )
         .join(Measure, UserVote.measure_id == Measure.id)
         .where(UserVote.user_id == current_user.id)
@@ -74,11 +103,16 @@ async def get_dashboard(
     row = result.one()
 
     total_votes = row.total_votes or 0
-    alignment_total = row.alignment_total or 0
-    alignment_matches = row.alignment_matches or 0
-    alignment_score = None
-    if alignment_total > 0:
-        alignment_score = round((alignment_matches / alignment_total) * 100, 1)
+
+    def _pct(matches, total):
+        if total > 0:
+            return round((matches / total) * 100, 1)
+        return None
+
+    alignment_score = _pct(row.alignment_matches or 0, row.alignment_total or 0)
+    house_alignment = _pct(row.house_matches or 0, row.house_total or 0)
+    senate_alignment = _pct(row.senate_matches or 0, row.senate_total or 0)
+    congress_alignment = _pct(row.congress_matches or 0, row.congress_total or 0)
 
     # --- Recent activity: only fetch 5 most recent ---
     recent_stmt = (
@@ -113,6 +147,9 @@ async def get_dashboard(
             measures_failed=row.measures_failed or 0,
             measures_pending=row.measures_pending or 0,
             alignment_score=alignment_score,
+            house_alignment=house_alignment,
+            senate_alignment=senate_alignment,
+            congress_alignment=congress_alignment,
         ),
         recent_activity=recent_activity,
     )
