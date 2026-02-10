@@ -1481,8 +1481,8 @@ function FeedScreen({ user, onNavigate, selectedCategory, onClearCategory, feedM
 
   const buildFeedUrl = (cursor?: string | null) => {
     let url = `${API_BASE_URL}/feed?limit=${BATCH_SIZE}&include_skipped=true&mode=${feedMode}`;
-    if (selectedCategory && selectedCategory.topics.length > 0) {
-      url += `&topic=${encodeURIComponent(selectedCategory.topics[0])}`;
+    if (selectedCategory) {
+      url += `&category=${encodeURIComponent(selectedCategory.name)}`;
     }
     if (cursor) {
       url += `&cursor=${encodeURIComponent(cursor)}`;
@@ -1669,7 +1669,7 @@ function FeedScreen({ user, onNavigate, selectedCategory, onClearCategory, feedM
         /* General Complete Screen — all bills voted on */
         <PixelBox variant="dialog" style={styles.victoryBox}>
           <Text style={styles.victorySprite}>🎉</Text>
-          <Text style={styles.victoryTitle}>QUEST COMPLETE!</Text>
+          <Text style={styles.victoryTitle}>VOTING COMPLETE!</Text>
           <Text style={styles.victoryText}>You reviewed all available bills!</Text>
           <Text style={styles.victoryStats}>Votes cast: {votesCount}</Text>
           <PixelButton onPress={() => onNavigate('home')} title="RETURN" variant="primary" icon="◄" />
