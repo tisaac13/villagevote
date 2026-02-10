@@ -1,5 +1,5 @@
 /**
- * VillageVote Mobile App
+ * RepCheck Mobile App
  * 32-bit Pokemon GameBoy Color Style
  */
 import React, { useEffect, useState, useRef, useCallback } from 'react';
@@ -25,7 +25,7 @@ const getApiBaseUrl = (): string => {
   }
 
   // Production — always HTTPS
-  return 'https://api.villagevote.us/v1';
+  return 'https://api.repcheck.us/v1';
 };
 
 const API_BASE_URL = getApiBaseUrl();
@@ -547,9 +547,9 @@ function LoginScreen({ onLogin }: { onLogin: (user: User) => void }) {
     >
       {/* Title Banner */}
       <View style={styles.titleBanner}>
-        <Text style={styles.titlePixelArt}>🏘️</Text>
-        <Text style={styles.gameTitle}>VILLAGEVOTE</Text>
-        <Text style={styles.titleSubtext}>By the People. For your People.</Text>
+        <Text style={styles.titlePixelArt}>🏛️</Text>
+        <Text style={styles.gameTitle}>REPCHECK</Text>
+        <Text style={styles.titleSubtext}>Of the People. For the People.</Text>
       </View>
 
       <PixelBox variant="menu" style={styles.loginBox}>
@@ -720,7 +720,7 @@ function LoginScreen({ onLogin }: { onLogin: (user: User) => void }) {
         </TouchableOpacity>
       </PixelBox>
 
-      <Text style={styles.versionTextStatic}>Ver 1.0.0 © 2026 VillageVote</Text>
+      <Text style={styles.versionTextStatic}>Ver 1.0.0 © 2026 RepCheck</Text>
     </ScrollView>
   );
 }
@@ -2267,7 +2267,7 @@ function MainApp({ user, onLogout, onUpdateUser }: { user: User; onLogout: () =>
       {/* Top Bar - Pokemon style header */}
       <View style={styles.gbcHeader}>
         <TouchableOpacity onPress={() => { setScrollToCategories(false); setCurrentScreen('home'); }}>
-          <Text style={styles.gbcHeaderTitle}>🏘️ VILLAGEVOTE</Text>
+          <Text style={styles.gbcHeaderTitle}>🏛️ REPCHECK</Text>
         </TouchableOpacity>
         <TouchableOpacity onPress={openMenu} style={styles.hamburgerButton}>
           <Text style={styles.hamburgerIcon}>☰</Text>
@@ -2387,9 +2387,9 @@ export default function App() {
   if (isLoading) {
     return (
       <View style={styles.splashScreen}>
-        <Text style={styles.splashLogo}>🏘️</Text>
-        <Text style={styles.splashTitle}>VILLAGEVOTE</Text>
-        <Text style={styles.splashSubtitle}>By the People. For your People.</Text>
+        <Text style={styles.splashLogo}>🏛️</Text>
+        <Text style={styles.splashTitle}>REPCHECK</Text>
+        <Text style={styles.splashSubtitle}>Of the People. For the People.</Text>
         <View style={styles.pixelLoader}>
           <Text style={styles.loaderDot}>●</Text>
           <Text style={styles.loaderDot}>●</Text>

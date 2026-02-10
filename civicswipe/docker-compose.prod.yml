@@ -1,4 +1,4 @@
-# CivicSwipe Production Docker Compose
+# RepCheck Production Docker Compose
 version: '3.8'
 
 services:

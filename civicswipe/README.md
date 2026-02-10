@@ -1,10 +1,10 @@
-# CivicSwipe
+# RepCheck
 
-> A legislation tracking and voting app that lets users swipe on bills and compare their votes to elected officials.
+> Of the People. For the People.
 
 ## 🎯 Project Overview
 
-CivicSwipe is a cross-platform mobile and web application that:
+RepCheck is a cross-platform mobile and web application that:
 
 1. **Personalizes legislation feeds** based on user location (address-required for accuracy)
 2. **Enables quick voting** via swipe gestures (Yes/No)
@@ -341,7 +341,7 @@ pytest tests/test_auth.py
 
 ## 📧 Contact & Support
 
-- **Email**: support@civicswipe.app
+- **Email**: support@repcheck.us
 - **Issues**: GitHub Issues
 - **Discussions**: GitHub Discussions
 

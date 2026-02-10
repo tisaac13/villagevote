@@ -1,4 +1,4 @@
--- CivicSwipe Initial Database Schema
+-- RepCheck Initial Database Schema
 -- Phoenix, Arizona MVP Release
 -- Requires: PostgreSQL 12+
 

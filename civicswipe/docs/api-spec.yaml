@@ -1,9 +1,9 @@
 openapi: 3.1.0
 info:
-  title: CivicSwipe API
+  title: RepCheck API
   version: 1.0.0
   description: |
-    API for CivicSwipe - A legislation tracking and voting app.
+    API for RepCheck - A legislation tracking and voting app.
     Phoenix, Arizona MVP Release.
     
     ## Authentication
@@ -19,7 +19,7 @@ info:
     POST endpoints that record votes support `Idempotency-Key` header.
 
 servers:
-  - url: https://api.civicswipe.app/v1
+  - url: https://api.repcheck.us/v1
     description: Production
   - url: http://localhost:8000/v1
     description: Local development

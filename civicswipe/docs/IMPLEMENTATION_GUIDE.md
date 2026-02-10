@@ -1,6 +1,6 @@
 # Implementation Guide: Next Steps
 
-This guide outlines the specific tasks needed to complete the CivicSwipe MVP for Phoenix, Arizona.
+This guide outlines the specific tasks needed to complete the RepCheck MVP for Phoenix, Arizona.
 
 ## 🎯 Current Status
 

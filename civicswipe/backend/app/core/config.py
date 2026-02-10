@@ -18,7 +18,7 @@ class Settings(BaseSettings):
     """Application settings"""
     
     # Project info
-    PROJECT_NAME: str = "CivicSwipe API"
+    PROJECT_NAME: str = "RepCheck API"
     VERSION: str = "1.0.0"
     ENVIRONMENT: str = "development"
     

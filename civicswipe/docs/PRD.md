@@ -1,7 +1,7 @@
-# CivicSwipe - Product Requirements Document (PRD)
+# RepCheck - Product Requirements Document (PRD)
 
 ## Product Name
-**CivicSwipe** (working name)
+**RepCheck**
 
 ## Problem Statement
 Most people don't track legislation and votes across federal/state/local levels. Even fewer can later see whether elected officials voted in line with their preferences.
