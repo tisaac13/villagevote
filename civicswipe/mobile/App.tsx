@@ -127,6 +127,9 @@ interface DashboardStats {
   measures_failed: number;
   measures_pending: number;
   alignment_score: number | null;
+  house_alignment: number | null;
+  senate_alignment: number | null;
+  congress_alignment: number | null;
 }
 
 interface VoteHistoryItem {
@@ -957,40 +960,43 @@ function HomeScreen({ user, onNavigate, onSelectCategory, scrollToCategories = f
 
   return (
     <ScrollView style={styles.gbcScrollView}>
-      {/* Trainer Card - hide when scrollToCategories */}
-      {!scrollToCategories && (
-        <PixelBox variant="menu" style={styles.trainerCard}>
-          <View style={styles.trainerHeader}>
-            <Text style={styles.trainerSprite}>👤</Text>
-            <View style={styles.trainerInfo}>
-              <Text style={styles.trainerName}>{user.first_name.toUpperCase()}</Text>
-              <Text style={styles.trainerTitle}>VOTER</Text>
-            </View>
-          </View>
-        </PixelBox>
-      )}
-
-      {/* Stats Box - hide when scrollToCategories */}
+      {/* Your Rep Rate - hide when scrollToCategories */}
       {!scrollToCategories && stats && (
-        <PixelBox variant="dialog" style={styles.statsBox}>
-          <Text style={styles.boxTitle}>═══ YOUR VOTES ═══</Text>
+        <PixelBox variant="dialog" style={styles.repRateCard}>
+          <Text style={styles.boxTitle}>══ YOUR REP RATE ══</Text>
 
-          <View style={styles.statsGrid}>
-            <StatDisplay label="TOTAL" value={stats.total_votes} icon="📊" />
-            <StatDisplay label="YEA" value={stats.yea_votes} color="#2e8b57" icon="✓" />
-            <StatDisplay label="NAY" value={stats.nay_votes} color={GBC.red} icon="✗" />
-            <StatDisplay label="SKIP" value={stats.skipped} color={GBC.gray} icon="→" />
+          <View style={styles.repRateRow}>
+            <Text style={styles.repRateIcon}>🏛️</Text>
+            <View style={styles.repRateInfo}>
+              <Text style={styles.repRateLabel}>HOUSE</Text>
+              <Text style={[styles.repRateValue, { color: GBC.blue }]}>
+                {stats.house_alignment !== null ? `${stats.house_alignment}%` : '—'}
+              </Text>
+            </View>
           </View>
 
           <View style={styles.dividerPixel} />
 
-          <View style={styles.statsGrid}>
-            <StatDisplay label="PASSED" value={stats.measures_passed} color="#2e8b57" icon="🏆" />
-            <StatDisplay label="FAILED" value={stats.measures_failed} color={GBC.red} icon="💔" />
-            <StatDisplay label="PENDING" value={stats.measures_pending} icon="⏳" />
-            {stats.alignment_score !== null && (
-              <StatDisplay label="ALIGN" value={`${stats.alignment_score}%`} color={GBC.blue} icon="🎯" />
-            )}
+          <View style={styles.repRateRow}>
+            <Text style={styles.repRateIcon}>🏛️</Text>
+            <View style={styles.repRateInfo}>
+              <Text style={styles.repRateLabel}>SENATE</Text>
+              <Text style={[styles.repRateValue, { color: GBC.blue }]}>
+                {stats.senate_alignment !== null ? `${stats.senate_alignment}%` : '—'}
+              </Text>
+            </View>
+          </View>
+
+          <View style={styles.dividerPixel} />
+
+          <View style={styles.repRateRow}>
+            <Text style={styles.repRateIcon}>🎯</Text>
+            <View style={styles.repRateInfo}>
+              <Text style={styles.repRateLabel}>CONGRESS</Text>
+              <Text style={[styles.repRateValue, { color: GBC.darkGreen }]}>
+                {stats.congress_alignment !== null ? `${stats.congress_alignment}%` : '—'}
+              </Text>
+            </View>
           </View>
         </PixelBox>
       )}
@@ -2936,36 +2942,35 @@ const styles = StyleSheet.create({
     fontWeight: 'bold',
   },
 
-  // Trainer Card
-  trainerCard: {
+  // Rep Rate Card
+  repRateCard: {
     marginBottom: 12,
   },
-  trainerHeader: {
+  repRateRow: {
     flexDirection: 'row',
     alignItems: 'center',
+    paddingVertical: 8,
   },
-  trainerSprite: {
-    fontSize: 48,
-    marginRight: 16,
+  repRateIcon: {
+    fontSize: 24,
+    marginRight: 12,
   },
-  trainerInfo: {
+  repRateInfo: {
     flex: 1,
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
   },
-  trainerName: {
-    fontSize: 20,
+  repRateLabel: {
+    fontSize: 14,
     fontWeight: 'bold',
-    color: GBC.darkGreen,
+    color: GBC.gray,
     fontFamily: Platform.OS === 'ios' ? 'Courier' : 'monospace',
   },
-  trainerTitle: {
-    fontSize: 12,
-    color: GBC.blue,
+  repRateValue: {
+    fontSize: 22,
+    fontWeight: 'bold',
     fontFamily: Platform.OS === 'ios' ? 'Courier' : 'monospace',
-  },
-
-  // Stats Box
-  statsBox: {
-    marginBottom: 12,
   },
   boxTitle: {
     fontSize: 14,
@@ -2974,11 +2979,6 @@ const styles = StyleSheet.create({
     fontFamily: Platform.OS === 'ios' ? 'Courier' : 'monospace',
     textAlign: 'center',
     marginBottom: 12,
-  },
-  statsGrid: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    justifyContent: 'space-between',
   },
   statDisplay: {
     width: '48%',

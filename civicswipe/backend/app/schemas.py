@@ -311,6 +311,9 @@ class DashboardStats(BaseModel):
     measures_failed: int
     measures_pending: int
     alignment_score: Optional[float] = None  # % of time user's vote matched outcome
+    house_alignment: Optional[float] = None
+    senate_alignment: Optional[float] = None
+    congress_alignment: Optional[float] = None
 
 
 class RecentActivity(BaseModel):
