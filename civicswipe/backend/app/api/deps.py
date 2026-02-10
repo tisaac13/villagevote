@@ -11,7 +11,7 @@ from sqlalchemy import select
 from uuid import UUID
 
 from app.core.database import get_db
-from app.core.security import verify_token
+from app.core.security import verify_token, is_token_blacklisted
 from app.models import User
 
 # HTTP Bearer token scheme
@@ -31,6 +31,14 @@ async def get_current_user(
             ...
     """
     token = credentials.credentials
+
+    # Check if token has been revoked (logout / rotation)
+    if await is_token_blacklisted(token):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Token has been revoked",
+            headers={"WWW-Authenticate": "Bearer"}
+        )
 
     # Verify the token
     payload = verify_token(token, token_type="access")

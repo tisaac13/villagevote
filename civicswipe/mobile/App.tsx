@@ -2,15 +2,66 @@
  * VillageVote Mobile App
  * 32-bit Pokemon GameBoy Color Style
  */
-import React, { useEffect, useState, useRef } from 'react';
+import React, { useEffect, useState, useRef, useCallback } from 'react';
 import { StatusBar } from 'expo-status-bar';
 import { View, Text, ActivityIndicator, StyleSheet, TextInput, TouchableOpacity, ScrollView, Platform, Dimensions, Animated, Modal } from 'react-native';
+import * as SecureStore from 'expo-secure-store';
 
-// Simple API base URL
-// Use your Mac's IP for iOS simulator, localhost for web
-const API_BASE_URL = Platform.OS === 'web'
-  ? 'http://localhost:8000/v1'
-  : 'http://192.168.1.195:8000/v1';
+// API base URL — driven by Expo config or __DEV__ flag.
+// Production builds always use HTTPS.
+const getApiBaseUrl = (): string => {
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const Constants = require('expo-constants').default;
+    const extra = Constants?.expoConfig?.extra;
+    if (extra?.apiBaseUrl) return extra.apiBaseUrl;
+  } catch { /* expo-constants not available */ }
+
+  // Development fallbacks (HTTP allowed for local dev only)
+  if (__DEV__) {
+    return Platform.OS === 'web'
+      ? 'http://localhost:8000/v1'
+      : 'http://192.168.1.195:8000/v1';
+  }
+
+  // Production — always HTTPS
+  return 'https://api.villagevote.us/v1';
+};
+
+const API_BASE_URL = getApiBaseUrl();
+
+// Secure token storage helpers — uses expo-secure-store on native, falls back to memory-only on web
+const TOKEN_KEY = 'vv_session';
+
+async function saveSession(user: Record<string, any>): Promise<void> {
+  try {
+    if (Platform.OS === 'web') return; // Web: no secure store, session is memory-only
+    await SecureStore.setItemAsync(TOKEN_KEY, JSON.stringify(user));
+  } catch { /* best-effort */ }
+}
+
+async function loadSession(): Promise<any | null> {
+  try {
+    if (Platform.OS === 'web') return null;
+    const raw = await SecureStore.getItemAsync(TOKEN_KEY);
+    return raw ? JSON.parse(raw) : null;
+  } catch { return null; }
+}
+
+async function clearSession(): Promise<void> {
+  try {
+    if (Platform.OS === 'web') return;
+    await SecureStore.deleteItemAsync(TOKEN_KEY);
+  } catch { /* best-effort */ }
+}
+
+// In production builds, silence console.log/warn/error to prevent leaking
+// sensitive data (tokens, user info) that may appear in error messages.
+if (!__DEV__) {
+  console.log = () => {};
+  console.warn = () => {};
+  console.error = () => {};
+}
 
 // Patriotic Color Palette - Red, White, Blue & Gold
 const GBC = {
@@ -51,6 +102,7 @@ interface User {
   first_name: string;
   last_name: string;
   access_token?: string;
+  birthday?: string;
 }
 
 interface Measure {
@@ -1563,8 +1615,510 @@ function FeedScreen({ user, onNavigate, selectedCategory, onClearCategory, feedM
   );
 }
 
+// Settings Screen
+function SettingsScreen({ user, onNavigate, onUpdateUser }: {
+  user: User;
+  onNavigate: (screen: string, options?: { scrollToCategories?: boolean }) => void;
+  onUpdateUser: (user: User) => void;
+}) {
+  // Profile field state
+  const [firstName, setFirstName] = useState(user.first_name);
+  const [lastName, setLastName] = useState(user.last_name);
+  const [email, setEmail] = useState(user.email);
+  const [birthday, setBirthday] = useState('');
+  const [currentPassword, setCurrentPassword] = useState('');
+
+  // UI state
+  const [isLoading, setIsLoading] = useState(true);
+  const [isSaving, setIsSaving] = useState(false);
+  const [error, setError] = useState('');
+  const [successMsg, setSuccessMsg] = useState('');
+  const [showPasswordField, setShowPasswordField] = useState(false);
+
+  // Address state
+  const [savedAddr, setSavedAddr] = useState<{ city: string; state: string; zip: string } | null>(null);
+
+  // Address modal state (reuse HomeScreen pattern)
+  const [showAddressModal, setShowAddressModal] = useState(false);
+  const [addrStreet, setAddrStreet] = useState('');
+  const [addrCity, setAddrCity] = useState('');
+  const [addrState, setAddrState] = useState('');
+  const [addrZip, setAddrZip] = useState('');
+  const [addrSuggestions, setAddrSuggestions] = useState<{ matchedAddress: string; coordinates: { x: number; y: number }; addressComponents: any }[]>([]);
+  const [addrSaving, setAddrSaving] = useState(false);
+  const [addrError, setAddrError] = useState('');
+  const addrDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Track original email to detect changes
+  const originalEmail = useRef(user.email);
+
+  useEffect(() => { loadProfile(); }, []);
+
+  // Show password field when email changes
+  useEffect(() => {
+    setShowPasswordField(email !== originalEmail.current);
+    if (email === originalEmail.current) setCurrentPassword('');
+  }, [email]);
+
+  const loadProfile = async () => {
+    try {
+      const response = await fetch(`${API_BASE_URL}/me`, {
+        headers: { 'Authorization': `Bearer ${user.access_token}` },
+      });
+      if (response.ok) {
+        const data = await response.json();
+        setFirstName(data.user.first_name || '');
+        setLastName(data.user.last_name || '');
+        setEmail(data.user.email || '');
+        originalEmail.current = data.user.email || '';
+
+        // Convert birthday from YYYY-MM-DD to MM-DD-YYYY
+        if (data.user.birthday) {
+          const [y, m, d] = data.user.birthday.split('-');
+          setBirthday(`${m}-${d}-${y}`);
+        }
+
+        if (data.address && data.address.city) {
+          setSavedAddr({
+            city: data.address.city,
+            state: data.address.state || '',
+            zip: data.address.postal_code || '',
+          });
+        }
+      }
+    } catch (err) {
+      setError('Failed to load profile');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  // Auto-format birthday as MM-DD-YYYY (same as LoginScreen)
+  const handleBirthdayChange = (text: string) => {
+    const numbers = text.replace(/[^0-9]/g, '');
+    let formatted = '';
+    if (numbers.length > 0) formatted = numbers.substring(0, 2);
+    if (numbers.length > 2) formatted += '-' + numbers.substring(2, 4);
+    if (numbers.length > 4) formatted += '-' + numbers.substring(4, 8);
+    setBirthday(formatted);
+  };
+
+  const handleSaveProfile = async () => {
+    setError('');
+    setSuccessMsg('');
+
+    // Validate name fields
+    if (!firstName.trim()) { setError('First name is required'); return; }
+    if (!lastName.trim()) { setError('Last name is required'); return; }
+
+    // Validate birthday if provided
+    if (birthday) {
+      const parts = birthday.split('-');
+      if (parts.length !== 3 || parts[0].length !== 2 || parts[1].length !== 2 || parts[2].length !== 4) {
+        setError('Invalid birthday format (use MM-DD-YYYY)'); return;
+      }
+      const [m, d, y] = parts;
+      const bDate = new Date(`${y}-${m}-${d}`);
+      if (isNaN(bDate.getTime())) { setError('Invalid birthday'); return; }
+      const age = new Date().getFullYear() - bDate.getFullYear();
+      if (age < 13) { setError('Must be at least 13 years old'); return; }
+      if (age > 120) { setError('Invalid birthday'); return; }
+    }
+
+    // Require password if email changed
+    if (email !== originalEmail.current && !currentPassword) {
+      setError('Current password is required to change email'); return;
+    }
+
+    setIsSaving(true);
+    try {
+      const body: any = {};
+      if (firstName.trim() !== user.first_name) body.first_name = firstName.trim();
+      if (lastName.trim() !== user.last_name) body.last_name = lastName.trim();
+      if (email !== originalEmail.current) {
+        body.email = email;
+        body.current_password = currentPassword;
+      }
+      if (birthday) {
+        const [m, d, y] = birthday.split('-');
+        body.birthday = `${y}-${m}-${d}`;
+      }
+
+      // Only call API if something changed
+      if (Object.keys(body).length === 0) {
+        setSuccessMsg('No changes to save');
+        setIsSaving(false);
+        return;
+      }
+
+      const response = await fetch(`${API_BASE_URL}/me/profile`, {
+        method: 'PATCH',
+        headers: {
+          'Authorization': `Bearer ${user.access_token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(body),
+      });
+
+      if (!response.ok) {
+        const errData = await response.json().catch(() => ({ detail: 'Failed to update profile' }));
+        if (Array.isArray(errData.detail)) {
+          throw new Error(errData.detail.map((e: any) => e.msg).join(', '));
+        }
+        throw new Error(errData.detail || 'Failed to update profile');
+      }
+
+      const data = await response.json();
+
+      // Update local user state
+      onUpdateUser({
+        ...user,
+        first_name: data.user.first_name,
+        last_name: data.user.last_name,
+        email: data.user.email,
+        birthday: data.user.birthday,
+      });
+
+      originalEmail.current = data.user.email;
+      setCurrentPassword('');
+      setShowPasswordField(false);
+      setSuccessMsg('Profile updated!');
+      setTimeout(() => setSuccessMsg(''), 3000);
+    } catch (err: any) {
+      setError(err.message);
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  // Address functions (same pattern as HomeScreen)
+  const openAddressModal = () => {
+    setAddrError('');
+    setAddrSuggestions([]);
+    if (savedAddr) {
+      setAddrStreet('');
+      setAddrCity(savedAddr.city);
+      setAddrState(savedAddr.state);
+      setAddrZip(savedAddr.zip);
+    } else {
+      setAddrStreet('');
+      setAddrCity('');
+      setAddrState('');
+      setAddrZip('');
+    }
+    setShowAddressModal(true);
+  };
+
+  const searchAddress = (street: string) => {
+    setAddrStreet(street);
+    if (addrDebounceRef.current) clearTimeout(addrDebounceRef.current);
+    if (street.length < 5) { setAddrSuggestions([]); return; }
+    addrDebounceRef.current = setTimeout(async () => {
+      try {
+        const onelineAddr = `${street}, ${addrCity || ''}, ${addrState || ''} ${addrZip || ''}`.trim();
+        const url = `https://geocoding.geo.census.gov/geocoder/locations/onelineaddress?address=${encodeURIComponent(onelineAddr)}&benchmark=Public_AR_Current&format=json`;
+        const response = await fetch(url);
+        if (response.ok) {
+          const data = await response.json();
+          const matches = data?.result?.addressMatches || [];
+          setAddrSuggestions(matches.slice(0, 5));
+        }
+      } catch (err) { console.error('Address search failed:', err); }
+    }, 400);
+  };
+
+  const selectSuggestion = (suggestion: any) => {
+    const components = suggestion.addressComponents || {};
+    setAddrStreet(suggestion.matchedAddress?.split(',')[0] || addrStreet);
+    setAddrCity(components.city || addrCity);
+    setAddrState(components.state || addrState);
+    setAddrZip(components.zip || addrZip);
+    setAddrSuggestions([]);
+  };
+
+  const saveAddress = async () => {
+    if (!addrStreet || !addrCity || !addrState || !addrZip) return;
+    setAddrSaving(true);
+    setAddrError('');
+    try {
+      const response = await fetch(`${API_BASE_URL}/me/address`, {
+        method: 'PATCH',
+        headers: {
+          'Authorization': `Bearer ${user.access_token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          line1: addrStreet,
+          city: addrCity,
+          state: addrState,
+          postal_code: addrZip,
+          country: 'US',
+        }),
+      });
+      if (response.ok) {
+        setSavedAddr({ city: addrCity, state: addrState, zip: addrZip });
+        setShowAddressModal(false);
+        setSuccessMsg('Address updated!');
+        setTimeout(() => setSuccessMsg(''), 3000);
+      } else {
+        const data = await response.json().catch(() => null);
+        setAddrError(data?.detail || 'Failed to save address. Please try again.');
+      }
+    } catch (err) {
+      setAddrError('Network error. Please check your connection.');
+    } finally {
+      setAddrSaving(false);
+    }
+  };
+
+  if (isLoading) {
+    return (
+      <View style={styles.gbcLoadingContainer}>
+        <Text style={styles.loadingPixel}>Loading...</Text>
+        <View style={styles.pixelLoader}>
+          <Text style={styles.loaderDot}>●</Text>
+          <Text style={styles.loaderDot}>●</Text>
+          <Text style={styles.loaderDot}>●</Text>
+        </View>
+      </View>
+    );
+  }
+
+  return (
+    <ScrollView
+      style={{ flex: 1, backgroundColor: GBC.screenBg }}
+      contentContainerStyle={{ padding: 12 }}
+      keyboardShouldPersistTaps="handled"
+    >
+      {/* Header */}
+      <Text style={[styles.boxTitle, { color: GBC.yellow, marginBottom: 16 }]}>═══ SETTINGS ═══</Text>
+
+      {/* Profile Section */}
+      <PixelBox variant="menu" style={{ marginBottom: 12 }}>
+        <Text style={styles.boxTitle}>PROFILE</Text>
+
+        <View style={styles.inputRow}>
+          <Text style={styles.inputLabel}>FIRST NAME:</Text>
+          <TextInput
+            style={styles.pixelInput}
+            value={firstName}
+            onChangeText={setFirstName}
+            placeholder="First"
+            placeholderTextColor={GBC.lightGray}
+          />
+        </View>
+
+        <View style={styles.inputRow}>
+          <Text style={styles.inputLabel}>LAST NAME:</Text>
+          <TextInput
+            style={styles.pixelInput}
+            value={lastName}
+            onChangeText={setLastName}
+            placeholder="Last"
+            placeholderTextColor={GBC.lightGray}
+          />
+        </View>
+
+        <View style={styles.inputRow}>
+          <Text style={styles.inputLabel}>BIRTHDAY:</Text>
+          <TextInput
+            style={styles.pixelInput}
+            placeholder="MM-DD-YYYY"
+            value={birthday}
+            onChangeText={handleBirthdayChange}
+            placeholderTextColor={GBC.lightGray}
+            keyboardType="number-pad"
+            maxLength={10}
+          />
+        </View>
+      </PixelBox>
+
+      {/* Email Section */}
+      <PixelBox variant="dialog" style={{ marginBottom: 12 }}>
+        <Text style={styles.boxTitle}>EMAIL</Text>
+
+        <View style={styles.inputRow}>
+          <Text style={styles.inputLabel}>EMAIL:</Text>
+          <TextInput
+            style={styles.pixelInput}
+            value={email}
+            onChangeText={setEmail}
+            keyboardType="email-address"
+            autoCapitalize="none"
+            placeholder="you@email.com"
+            placeholderTextColor={GBC.lightGray}
+          />
+        </View>
+
+        {showPasswordField && (
+          <View style={styles.inputRow}>
+            <Text style={[styles.inputLabel, { color: GBC.red }]}>CURRENT PASSWORD:</Text>
+            <TextInput
+              style={[styles.pixelInput, { borderColor: GBC.red }]}
+              placeholder="Required to change email"
+              value={currentPassword}
+              onChangeText={setCurrentPassword}
+              secureTextEntry
+              placeholderTextColor={GBC.lightGray}
+            />
+            <Text style={styles.addressHint}>Password required for security</Text>
+          </View>
+        )}
+      </PixelBox>
+
+      {/* Address Section */}
+      <PixelBox variant="dialog" style={{ marginBottom: 12 }}>
+        <Text style={styles.boxTitle}>ADDRESS</Text>
+        {savedAddr ? (
+          <View style={{ alignItems: 'center' }}>
+            <Text style={styles.settingsAddrText}>
+              {savedAddr.city}, {savedAddr.state} {savedAddr.zip}
+            </Text>
+            <TouchableOpacity style={{ paddingVertical: 8 }} onPress={openAddressModal}>
+              <Text style={styles.settingsAddrLink}>UPDATE ADDRESS</Text>
+            </TouchableOpacity>
+          </View>
+        ) : (
+          <TouchableOpacity style={{ paddingVertical: 12, alignItems: 'center' }} onPress={openAddressModal}>
+            <Text style={styles.settingsAddrLink}>+ ADD ADDRESS</Text>
+          </TouchableOpacity>
+        )}
+      </PixelBox>
+
+      {/* Error / Success Messages */}
+      {error ? (
+        <View style={styles.errorBox}>
+          <Text style={styles.errorPixelText}>⚠ {error}</Text>
+        </View>
+      ) : null}
+
+      {successMsg ? (
+        <View style={[styles.errorBox, { backgroundColor: '#2e8b57', borderColor: '#1a6b3a' }]}>
+          <Text style={styles.errorPixelText}>✓ {successMsg}</Text>
+        </View>
+      ) : null}
+
+      {/* Save Button */}
+      <View style={styles.buttonRow}>
+        <PixelButton
+          onPress={handleSaveProfile}
+          title={isSaving ? 'SAVING...' : 'SAVE CHANGES'}
+          variant="primary"
+          disabled={isSaving}
+          icon="💾"
+        />
+      </View>
+
+      {/* Back Button */}
+      <View style={{ marginTop: 12 }}>
+        <PixelButton
+          onPress={() => onNavigate('home')}
+          title="BACK"
+          variant="secondary"
+          icon="◄"
+        />
+      </View>
+
+      {/* Address Modal */}
+      <Modal visible={showAddressModal} animationType="slide" transparent>
+        <View style={styles.addrModalOverlay}>
+          <View style={styles.addrModalContainer}>
+            <PixelBox variant="dialog" style={styles.addrModalBox}>
+              <Text style={styles.boxTitle}>{savedAddr ? '═══ UPDATE ADDRESS ═══' : '═══ ENTER ADDRESS ═══'}</Text>
+
+              <View style={styles.addrField}>
+                <Text style={styles.addrFieldLabel}>STREET:</Text>
+                <TextInput
+                  style={styles.addrInput}
+                  placeholder="123 Main St"
+                  value={addrStreet}
+                  onChangeText={searchAddress}
+                  placeholderTextColor={GBC.lightGray}
+                  autoFocus
+                />
+              </View>
+
+              {addrSuggestions.length > 0 && (
+                <View style={styles.addrSuggestions}>
+                  {addrSuggestions.map((s, i) => (
+                    <TouchableOpacity
+                      key={i}
+                      style={styles.addrSuggestionItem}
+                      onPress={() => selectSuggestion(s)}
+                    >
+                      <Text style={styles.addrSuggestionText} numberOfLines={1}>
+                        {s.matchedAddress}
+                      </Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+              )}
+
+              <View style={styles.addrField}>
+                <Text style={styles.addrFieldLabel}>CITY:</Text>
+                <TextInput
+                  style={styles.addrInput}
+                  placeholder="Phoenix"
+                  value={addrCity}
+                  onChangeText={setAddrCity}
+                  placeholderTextColor={GBC.lightGray}
+                />
+              </View>
+
+              <View style={styles.addrField}>
+                <Text style={styles.addrFieldLabel}>STATE:</Text>
+                <TextInput
+                  style={styles.addrInput}
+                  placeholder="AZ"
+                  value={addrState}
+                  onChangeText={(t) => setAddrState(t.toUpperCase().slice(0, 2))}
+                  placeholderTextColor={GBC.lightGray}
+                  autoCapitalize="characters"
+                  maxLength={2}
+                />
+              </View>
+
+              <View style={styles.addrField}>
+                <Text style={styles.addrFieldLabel}>ZIP:</Text>
+                <TextInput
+                  style={styles.addrInput}
+                  placeholder="85001"
+                  value={addrZip}
+                  onChangeText={setAddrZip}
+                  placeholderTextColor={GBC.lightGray}
+                  keyboardType="number-pad"
+                />
+              </View>
+
+              {addrError ? (
+                <Text style={styles.addrErrorText}>{addrError}</Text>
+              ) : null}
+
+              <View style={styles.addrButtonRow}>
+                <TouchableOpacity
+                  style={styles.addrCancelButton}
+                  onPress={() => { setShowAddressModal(false); setAddrSuggestions([]); setAddrError(''); }}
+                >
+                  <Text style={styles.addrCancelText}>CANCEL</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[styles.addrSaveButton, (!addrStreet || !addrCity || !addrState || !addrZip) && { opacity: 0.5 }]}
+                  onPress={saveAddress}
+                  disabled={!addrStreet || !addrCity || !addrState || !addrZip || addrSaving}
+                >
+                  <Text style={styles.addrSaveText}>{addrSaving ? 'SAVING...' : 'SAVE'}</Text>
+                </TouchableOpacity>
+              </View>
+            </PixelBox>
+          </View>
+        </View>
+      </Modal>
+    </ScrollView>
+  );
+}
+
 // Main App with Navigation - Pokemon Style
-function MainApp({ user, onLogout }: { user: User; onLogout: () => void }) {
+function MainApp({ user, onLogout, onUpdateUser }: { user: User; onLogout: () => void; onUpdateUser: (user: User) => void }) {
   const [currentScreen, setCurrentScreen] = useState('home');
   const [menuOpen, setMenuOpen] = useState(false);
   const [selectedCategory, setSelectedCategory] = useState<Category | null>(null);
@@ -1627,6 +2181,8 @@ function MainApp({ user, onLogout }: { user: User; onLogout: () => void }) {
         return <FeedScreen user={user} onNavigate={handleNavigate} selectedCategory={selectedCategory} onClearCategory={handleClearCategory} feedMode={feedMode} onSetFeedMode={setFeedMode} />;
       case 'history':
         return <HistoryScreen user={user} onNavigate={handleNavigate} />;
+      case 'settings':
+        return <SettingsScreen user={user} onNavigate={handleNavigate} onUpdateUser={onUpdateUser} />;
       default:
         return <HomeScreen user={user} onNavigate={handleNavigate} onSelectCategory={handleSelectCategory} scrollToCategories={scrollToCategories} feedMode={feedMode} onSetFeedMode={setFeedMode} />;
     }
@@ -1692,9 +2248,9 @@ function MainApp({ user, onLogout }: { user: User; onLogout: () => void }) {
               <Text style={styles.slideMenuText}>VOTE HISTORY</Text>
             </TouchableOpacity>
 
-            <TouchableOpacity style={[styles.slideMenuItem, styles.slideMenuItemDisabled]}>
+            <TouchableOpacity style={styles.slideMenuItem} onPress={() => handleMenuNavigate('settings')}>
               <Text style={styles.slideMenuIcon}>⚙️</Text>
-              <Text style={[styles.slideMenuText, styles.slideMenuTextDisabled]}>SETTINGS</Text>
+              <Text style={styles.slideMenuText}>SETTINGS</Text>
             </TouchableOpacity>
 
             <View style={styles.menuDivider} />
@@ -1715,8 +2271,43 @@ export default function App() {
   const [user, setUser] = useState<User | null>(null);
   const [isLoading, setIsLoading] = useState(true);
 
+  // On mount: try to restore session from secure storage
   useEffect(() => {
-    setTimeout(() => setIsLoading(false), 800);
+    (async () => {
+      try {
+        const saved = await loadSession();
+        if (saved?.access_token) {
+          // Validate the token is still good by hitting /me
+          const res = await fetch(`${API_BASE_URL}/me`, {
+            headers: { 'Authorization': `Bearer ${saved.access_token}` },
+          });
+          if (res.ok) {
+            setUser(saved);
+          } else {
+            await clearSession();
+          }
+        }
+      } catch { /* no saved session */ }
+      setIsLoading(false);
+    })();
+  }, []);
+
+  // Save session to secure storage when user logs in
+  const handleLogin = useCallback(async (u: User) => {
+    setUser(u);
+    await saveSession(u);
+  }, []);
+
+  // Clear secure storage on logout
+  const handleLogout = useCallback(async () => {
+    setUser(null);
+    await clearSession();
+  }, []);
+
+  // Update user and persist
+  const handleUpdateUser = useCallback(async (u: User) => {
+    setUser(u);
+    await saveSession(u);
   }, []);
 
   if (isLoading) {
@@ -1738,7 +2329,7 @@ export default function App() {
   return (
     <View style={styles.gbcFrame}>
       <StatusBar style="light" />
-      {user ? <MainApp user={user} onLogout={() => setUser(null)} /> : <LoginScreen onLogin={setUser} />}
+      {user ? <MainApp user={user} onLogout={handleLogout} onUpdateUser={handleUpdateUser} /> : <LoginScreen onLogin={handleLogin} />}
     </View>
   );
 }
@@ -3054,5 +3645,21 @@ const styles = StyleSheet.create({
     fontFamily: Platform.OS === 'ios' ? 'Courier' : 'monospace',
     textAlign: 'center',
     marginBottom: 8,
+  },
+
+  // Settings Screen
+  settingsAddrText: {
+    fontSize: 14,
+    color: GBC.darkGreen,
+    fontFamily: Platform.OS === 'ios' ? 'Courier' : 'monospace',
+    marginBottom: 4,
+    textAlign: 'center',
+  },
+  settingsAddrLink: {
+    fontSize: 12,
+    color: GBC.blue,
+    fontFamily: Platform.OS === 'ios' ? 'Courier' : 'monospace',
+    fontWeight: 'bold',
+    textAlign: 'center',
   },
 });

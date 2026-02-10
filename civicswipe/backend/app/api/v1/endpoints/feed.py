@@ -34,6 +34,13 @@ CATEGORY_MAPPING = {
     "Elections": ["Elections", "Civic Engagement"],
 }
 
+# Pre-compute valid topic values for input validation
+VALID_TOPICS = set()  # type: set
+for _topics in CATEGORY_MAPPING.values():
+    VALID_TOPICS.update(_topics)
+# Also allow category names themselves as topics
+VALID_TOPICS.update(CATEGORY_MAPPING.keys())
+
 
 @router.get("/categories", response_model=List[dict])
 async def get_categories(
@@ -117,6 +124,13 @@ async def get_feed(
     Returns measures relevant to user's divisions, ranked by scheduled date
     Skipped items are recycled to the end of the feed
     """
+    # Validate topic parameter against known values to prevent injection
+    if topic and topic not in VALID_TOPICS:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Invalid topic. Must be one of: {', '.join(sorted(VALID_TOPICS))}"
+        )
+
     # Get user's divisions
     stmt = select(UserDivision.division_id).where(UserDivision.user_id == current_user.id)
     result = await db.execute(stmt)
