@@ -1456,42 +1456,94 @@ function FeedScreen({ user, onNavigate, selectedCategory, onClearCategory, feedM
   const [currentIndex, setCurrentIndex] = useState(0);
   const [isLoading, setIsLoading] = useState(true);
   const [votesCount, setVotesCount] = useState(0);
+  const [totalRemaining, setTotalRemaining] = useState(0);
+  const [nextCursor, setNextCursor] = useState<string | null>(null);
+  const [isFetchingMore, setIsFetchingMore] = useState(false);
+  const fetchingRef = useRef(false); // guard against concurrent fetches
+
+  const BATCH_SIZE = 30;
+  const PREFETCH_THRESHOLD = 5; // load next batch when 5 bills left in current batch
 
   useEffect(() => {
     loadMeasures();
   }, [selectedCategory, feedMode]);
 
+  // Auto-fetch next batch when user nears end of current batch
+  useEffect(() => {
+    const billsLeft = measures.length - currentIndex;
+    // Prefetch when approaching end, or emergency fetch when past the end
+    if (nextCursor && !fetchingRef.current) {
+      if ((billsLeft <= PREFETCH_THRESHOLD && billsLeft > 0) || (billsLeft <= 0 && totalRemaining > 0)) {
+        fetchMoreMeasures();
+      }
+    }
+  }, [currentIndex, measures.length, nextCursor, totalRemaining]);
+
+  const buildFeedUrl = (cursor?: string | null) => {
+    let url = `${API_BASE_URL}/feed?limit=${BATCH_SIZE}&include_skipped=true&mode=${feedMode}`;
+    if (selectedCategory && selectedCategory.topics.length > 0) {
+      url += `&topic=${encodeURIComponent(selectedCategory.topics[0])}`;
+    }
+    if (cursor) {
+      url += `&cursor=${encodeURIComponent(cursor)}`;
+    }
+    return url;
+  };
+
+  const parseFeedItems = (data: any): Measure[] => {
+    return (data.items || []).map((item: any) => ({
+      id: item.measure_id || item.id,
+      title: item.title,
+      summary: item.summary_short || item.summary || '',
+      level: item.level,
+      status: item.status,
+      sources: item.sources,
+      user_vote: item.user_vote,
+      external_id: item.external_id,
+    }));
+  };
+
   const loadMeasures = async () => {
     setIsLoading(true);
     setCurrentIndex(0);
+    setVotesCount(0);
+    setNextCursor(null);
     try {
-      let url = `${API_BASE_URL}/feed?limit=30&include_skipped=true&mode=${feedMode}`;
-
-      // If category is selected, add topic filter for each topic in the category
-      if (selectedCategory && selectedCategory.topics.length > 0) {
-        // Use the first topic as the filter (backend will match any bill with that topic)
-        url += `&topic=${encodeURIComponent(selectedCategory.topics[0])}`;
-      }
-
-      const response = await fetch(url, {
+      const response = await fetch(buildFeedUrl(), {
         headers: { 'Authorization': `Bearer ${user.access_token}` },
       });
       const data = await response.json();
-      const items = (data.items || []).map((item: any) => ({
-        id: item.measure_id || item.id,
-        title: item.title,
-        summary: item.summary_short || item.summary || '',
-        level: item.level,
-        status: item.status,
-        sources: item.sources,
-        user_vote: item.user_vote,
-        external_id: item.external_id,
-      }));
+      const items = parseFeedItems(data);
       setMeasures(items);
+      setTotalRemaining(data.total_remaining ?? items.length);
+      setNextCursor(data.next_cursor ?? null);
     } catch (err) {
       console.error('Failed to load measures:', err);
     } finally {
       setIsLoading(false);
+    }
+  };
+
+  const fetchMoreMeasures = async () => {
+    if (fetchingRef.current || !nextCursor) return;
+    fetchingRef.current = true;
+    setIsFetchingMore(true);
+    try {
+      const response = await fetch(buildFeedUrl(nextCursor), {
+        headers: { 'Authorization': `Bearer ${user.access_token}` },
+      });
+      const data = await response.json();
+      const newItems = parseFeedItems(data);
+      if (newItems.length > 0) {
+        setMeasures(prev => [...prev, ...newItems]);
+      }
+      setTotalRemaining(data.total_remaining ?? totalRemaining);
+      setNextCursor(data.next_cursor ?? null);
+    } catch (err) {
+      console.error('Failed to load more measures:', err);
+    } finally {
+      setIsFetchingMore(false);
+      fetchingRef.current = false;
     }
   };
 
@@ -1513,9 +1565,11 @@ function FeedScreen({ user, onNavigate, selectedCategory, onClearCategory, feedM
     }
 
     if (vote !== 'skip') {
-      setVotesCount(votesCount + 1);
+      setVotesCount(prev => prev + 1);
     }
-    setCurrentIndex(currentIndex + 1);
+    // Decrement total remaining as user processes each bill
+    setTotalRemaining(prev => Math.max(0, prev - 1));
+    setCurrentIndex(prev => prev + 1);
   };
 
   if (isLoading) {
@@ -1558,18 +1612,18 @@ function FeedScreen({ user, onNavigate, selectedCategory, onClearCategory, feedM
         </View>
       )}
 
-      {/* Progress Bar - like Pokemon XP bar */}
+      {/* Progress Bar - shows voted vs total outstanding */}
       <View style={styles.progressBarContainer}>
         <Text style={styles.progressLabel}>PROGRESS</Text>
         <View style={styles.progressBarOuter}>
           <View
             style={[
               styles.progressBarInner,
-              { width: `${measures.length > 0 ? (currentIndex / measures.length) * 100 : 0}%` }
+              { width: `${(votesCount + totalRemaining) > 0 ? (votesCount / (votesCount + totalRemaining)) * 100 : 0}%` }
             ]}
           />
         </View>
-        <Text style={styles.progressText}>{currentIndex}/{measures.length}</Text>
+        <Text style={styles.progressText}>{totalRemaining} remaining</Text>
       </View>
 
       {/* Vote Counter */}
@@ -1579,7 +1633,17 @@ function FeedScreen({ user, onNavigate, selectedCategory, onClearCategory, feedM
 
       {currentMeasure ? (
         <SwipeCard measure={currentMeasure} onVote={handleVote} />
-      ) : selectedCategory ? (
+      ) : isFetchingMore ? (
+        /* Loading next batch */
+        <View style={styles.gbcLoadingContainer}>
+          <Text style={styles.loadingPixel}>Loading more bills...</Text>
+          <View style={styles.pixelLoader}>
+            <Text style={styles.loaderDot}>●</Text>
+            <Text style={styles.loaderDot}>●</Text>
+            <Text style={styles.loaderDot}>●</Text>
+          </View>
+        </View>
+      ) : selectedCategory && totalRemaining === 0 ? (
         /* Category Complete Screen */
         <PixelBox variant="dialog" style={styles.victoryBox}>
           <Text style={styles.victorySprite}>{selectedCategory.icon}</Text>
@@ -1601,8 +1665,8 @@ function FeedScreen({ user, onNavigate, selectedCategory, onClearCategory, feedM
             />
           </View>
         </PixelBox>
-      ) : (
-        /* General Complete Screen */
+      ) : totalRemaining === 0 ? (
+        /* General Complete Screen — all bills voted on */
         <PixelBox variant="dialog" style={styles.victoryBox}>
           <Text style={styles.victorySprite}>🎉</Text>
           <Text style={styles.victoryTitle}>QUEST COMPLETE!</Text>
@@ -1610,6 +1674,16 @@ function FeedScreen({ user, onNavigate, selectedCategory, onClearCategory, feedM
           <Text style={styles.victoryStats}>Votes cast: {votesCount}</Text>
           <PixelButton onPress={() => onNavigate('home')} title="RETURN" variant="primary" icon="◄" />
         </PixelBox>
+      ) : (
+        /* End of current batch but more exist — trigger fetch */
+        <View style={styles.gbcLoadingContainer}>
+          <Text style={styles.loadingPixel}>Loading more bills...</Text>
+          <View style={styles.pixelLoader}>
+            <Text style={styles.loaderDot}>●</Text>
+            <Text style={styles.loaderDot}>●</Text>
+            <Text style={styles.loaderDot}>●</Text>
+          </View>
+        </View>
       )}
     </View>
   );
