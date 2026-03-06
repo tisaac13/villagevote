@@ -1,12 +1,15 @@
 """
 Authentication endpoints
 """
+import logging
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from datetime import datetime
 from typing import Optional
+
+logger = logging.getLogger(__name__)
 
 from app.core.database import get_db
 from app.core.security import (
@@ -118,8 +121,21 @@ async def signup(
     access_token = create_access_token(data={"sub": str(new_user.id)})
     refresh_token = create_refresh_token(data={"sub": str(new_user.id)})
 
-    # TODO: Trigger background job for geocoding
-    # TODO: Trigger background job for division/official resolution
+    # Trigger background location resolution (geocoding + divisions + reps)
+    if user_data.address:
+        try:
+            from app.tasks.user_onboarding import resolve_user_location
+            resolve_user_location.delay(
+                user_id=str(new_user.id),
+                street=user_data.address.line1,
+                city=user_data.address.city,
+                state=user_data.address.state,
+                zip_code=user_data.address.postal_code,
+            )
+        except Exception:
+            logger.warning(
+                f"Failed to enqueue location resolution for user {new_user.id}"
+            )
 
     return SignupResponse(
         user=UserResponse(

@@ -14,6 +14,7 @@ celery_app = Celery(
     include=[
         "app.tasks.ingestion",
         "app.tasks.summarization",
+        "app.tasks.user_onboarding",
     ]
 )
 

@@ -46,13 +46,21 @@ async def get_matches(
     if level:
         stmt = stmt.where(Measure.level == level.value)
     
+    # Parse cursor (offset-based, consistent with feed endpoint)
+    offset = 0
+    if cursor:
+        try:
+            offset = int(cursor)
+        except ValueError:
+            offset = 0
+
     # Order by computed date (most recent first)
     stmt = stmt.order_by(MatchResult.computed_at.desc())
-    stmt = stmt.limit(limit)
-    
+    stmt = stmt.offset(offset).limit(limit)
+
     result = await db.execute(stmt)
     rows = result.fetchall()
-    
+
     # Build response items
     items = []
     for match_result, measure, user_vote in rows:
@@ -65,10 +73,13 @@ async def get_matches(
             match_score=float(match_result.match_score),
             computed_at=match_result.computed_at
         ))
-    
+
+    # Next page cursor if we got a full page
+    next_cursor = str(offset + limit) if len(items) == limit else None
+
     return MatchesResponse(
         items=items,
-        next_cursor=None  # TODO: Implement cursor pagination
+        next_cursor=next_cursor,
     )
 
 
