@@ -140,9 +140,22 @@ async def trigger_ingestion(
     await db.commit()
     await db.refresh(run)
     
-    # TODO: Trigger async task to run connector
-    # celery_app.send_task('run_connector', args=[str(run.id)])
-    
+    # Trigger async ingestion task
+    try:
+        from app.tasks.ingestion import run_connector
+        run_connector.delay(
+            run_id=str(run.id),
+            connector_name=connector.name,
+        )
+    except Exception:
+        import logging
+        logging.getLogger(__name__).warning(
+            f"Failed to enqueue connector run {run.id} for '{connector.name}'"
+        )
+        run.status = "failed"
+        run.error = "Failed to enqueue task"
+        await db.commit()
+
     return IngestionRunResponse(
         run_id=run.id,
         status=run.status

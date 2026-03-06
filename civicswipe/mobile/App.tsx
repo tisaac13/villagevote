@@ -1618,20 +1618,6 @@ function FeedScreen({ user, onNavigate, selectedCategory, onClearCategory, feedM
         </View>
       )}
 
-      {/* Progress Bar - shows voted vs total outstanding */}
-      <View style={styles.progressBarContainer}>
-        <Text style={styles.progressLabel}>PROGRESS</Text>
-        <View style={styles.progressBarOuter}>
-          <View
-            style={[
-              styles.progressBarInner,
-              { width: `${(votesCount + totalRemaining) > 0 ? (votesCount / (votesCount + totalRemaining)) * 100 : 0}%` }
-            ]}
-          />
-        </View>
-        <Text style={styles.progressText}>{totalRemaining} remaining</Text>
-      </View>
-
       {/* Vote Counter */}
       <View style={styles.voteCounter}>
         <Text style={styles.voteCounterText}>VOTES: {votesCount}</Text>
@@ -3161,39 +3147,6 @@ const styles = StyleSheet.create({
   feedGbcContainer: {
     flex: 1,
     backgroundColor: GBC.screenBg,
-  },
-  progressBarContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    padding: 12,
-    backgroundColor: GBC.blue,
-    borderBottomWidth: 4,
-    borderBottomColor: GBC.darkBlue,
-  },
-  progressLabel: {
-    fontSize: 10,
-    color: GBC.yellow,
-    fontFamily: Platform.OS === 'ios' ? 'Courier' : 'monospace',
-    fontWeight: 'bold',
-    marginRight: 8,
-  },
-  progressBarOuter: {
-    flex: 1,
-    height: 12,
-    backgroundColor: GBC.darkBlue,
-    borderWidth: 2,
-    borderColor: GBC.white,
-  },
-  progressBarInner: {
-    height: '100%',
-    backgroundColor: GBC.yellow,
-  },
-  progressText: {
-    fontSize: 10,
-    color: GBC.yellow,
-    fontFamily: Platform.OS === 'ios' ? 'Courier' : 'monospace',
-    fontWeight: 'bold',
-    marginLeft: 8,
   },
   voteCounter: {
     backgroundColor: GBC.yellow,

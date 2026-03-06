@@ -149,6 +149,89 @@ def ingest_phoenix_data(self, days: int = 30, max_events: int = 10) -> Dict[str,
         raise self.retry(exc=e, countdown=60, max_retries=3)
 
 
+# Mapping from connector name to ingestion function
+# Used by run_connector to dispatch manual ingestion runs
+CONNECTOR_TASK_MAP = {
+    "congress": lambda: ingest_federal_data(congress=119, limit=250, fetch_all=True),
+    "federal": lambda: ingest_federal_data(congress=119, limit=250, fetch_all=True),
+    "roll_call_votes": lambda: ingest_roll_call_votes(congress=119, session=1),
+    "arizona": lambda: ingest_arizona_data(limit=50, pages=2),
+    "phoenix_legistar": lambda: ingest_phoenix_data(days=14, max_events=10),
+    "phoenix": lambda: ingest_phoenix_data(days=14, max_events=10),
+}
+
+
+@celery_app.task(bind=True, name="app.tasks.ingestion.run_connector")
+def run_connector(self, run_id: str, connector_name: str) -> Dict[str, Any]:
+    """
+    Run a specific connector by name and update the IngestionRun record.
+
+    Dispatches to the appropriate ingestion function based on connector name,
+    then updates the IngestionRun with results or error.
+
+    Args:
+        run_id: UUID string of the IngestionRun record
+        connector_name: Name of the connector to run
+
+    Returns:
+        Ingestion statistics
+    """
+    logger.info(f"Starting connector run {run_id} for '{connector_name}'")
+
+    task_fn = CONNECTOR_TASK_MAP.get(connector_name)
+    if not task_fn:
+        # Update run as failed and bail
+        async def _fail():
+            from app.models import IngestionRun
+            from datetime import datetime, timezone
+            async with async_session_maker() as db:
+                run = await db.get(IngestionRun, run_id)
+                if run:
+                    run.status = "failed"
+                    run.error = f"Unknown connector: '{connector_name}'"
+                    run.finished_at = datetime.now(timezone.utc)
+                    await db.commit()
+
+        run_async(_fail())
+        return {"error": f"Unknown connector: '{connector_name}'"}
+
+    try:
+        stats = task_fn()
+
+        # Update run as succeeded
+        async def _succeed():
+            from app.models import IngestionRun
+            from datetime import datetime, timezone
+            async with async_session_maker() as db:
+                run = await db.get(IngestionRun, run_id)
+                if run:
+                    run.status = "succeeded"
+                    run.stats = stats or {}
+                    run.finished_at = datetime.now(timezone.utc)
+                    await db.commit()
+
+        run_async(_succeed())
+        logger.info(f"Connector run {run_id} completed: {stats}")
+        return stats
+
+    except Exception as e:
+        # Update run as failed
+        async def _error():
+            from app.models import IngestionRun
+            from datetime import datetime, timezone
+            async with async_session_maker() as db:
+                run = await db.get(IngestionRun, run_id)
+                if run:
+                    run.status = "failed"
+                    run.error = str(e)
+                    run.finished_at = datetime.now(timezone.utc)
+                    await db.commit()
+
+        run_async(_error())
+        logger.error(f"Connector run {run_id} failed: {e}")
+        raise self.retry(exc=e, countdown=60, max_retries=3)
+
+
 @celery_app.task(bind=True, name="app.tasks.ingestion.ingest_all_sources")
 def ingest_all_sources(self) -> Dict[str, Dict[str, Any]]:
     """

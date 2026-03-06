@@ -49,9 +49,17 @@ async def get_my_votes(
     if topic:
         stmt = stmt.where(Measure.topic_tags.contains([topic]))
 
+    # Parse cursor (offset-based, consistent with feed endpoint)
+    offset = 0
+    if cursor:
+        try:
+            offset = int(cursor)
+        except ValueError:
+            offset = 0
+
     # Order by vote date (most recent first)
     stmt = stmt.order_by(UserVote.created_at.desc())
-    stmt = stmt.limit(limit)
+    stmt = stmt.offset(offset).limit(limit)
 
     result = await db.execute(stmt)
     rows = result.fetchall()
@@ -82,9 +90,12 @@ async def get_my_votes(
             outcome_matches_user=outcome_matches
         ))
 
+    # Next page cursor if we got a full page
+    next_cursor = str(offset + limit) if len(items) == limit else None
+
     return MyVotesResponse(
         items=items,
-        next_cursor=None  # TODO: Implement cursor pagination
+        next_cursor=next_cursor,
     )
 
 
