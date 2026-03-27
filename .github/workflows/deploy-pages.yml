@@ -32,7 +32,9 @@ jobs:
 
       - name: Export for web
         working-directory: civicswipe/mobile
-        run: npx expo export --platform web
+        env:
+          EXPO_PUBLIC_BASE_PATH: /villagevote
+        run: npx expo export --platform web --base-url /villagevote
 
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
